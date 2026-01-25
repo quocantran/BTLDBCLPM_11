@@ -1,0 +1,58 @@
+/* Login page specific styles */
+.login-container {
+  @apply min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8;
+}
+
+.login-card {
+  @apply bg-white p-6 sm:p-8 rounded-lg shadow-lg max-w-md w-full mx-auto;
+}
+
+.login-form {
+  @apply space-y-6;
+}
+
+.login-header {
+  @apply text-center mb-8;
+}
+
+.login-footer {
+  @apply mt-6 text-center;
+}
+
+/* Mobile-first responsive breakpoints */
+@media (max-width: 640px) {
+  .login-card {
+    @apply mx-4 p-4;
+  }
+
+  .login-header h1 {
+    @apply text-xl;
+  }
+}
+
+@media (min-width: 768px) {
+  .login-card {
+    @apply p-8;
+  }
+}
+
+@media (min-width: 1024px) {
+  .login-card {
+    @apply p-10;
+  }
+}
+
+/* Custom Ant Design overrides for login form */
+.login-form {
+  .ant-input {
+    @apply h-12 px-4 rounded-lg border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500;
+  }
+
+  .ant-btn-primary {
+    @apply bg-blue-600 hover:bg-blue-700 border-blue-600;
+  }
+
+  .ant-checkbox-wrapper {
+    @apply text-sm text-gray-700;
+  }
+}

@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* === BỔ SUNG CÁC BIẾN MÀU TỪ DESIGN CỦA TRANG EXAMS === */
+  --primary-color: #0d47a1;
+  --light-gray: #f0f2f4;
+  --dark-text: #1a202c;
+  --medium-text: #4a5568;
+  --light-text: #718096;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  /* Dòng này có thể bị ghi đè bởi --font-sans trong @theme, bạn có thể cân nhắc xóa đi */
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-[var(--primary-color)] text-white hover:bg-blue-800 transition-colors duration-300;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-[var(--medium-text)] border border-gray-300 hover:bg-gray-50;
+  }
+
+  .sidebar-active {
+    @apply bg-blue-100 text-[var(--primary-color)] font-semibold border-l-4 border-[var(--primary-color)];
+  }
+  .sidebar-inactive {
+    @apply text-[var(--medium-text)] hover:bg-gray-200 hover:text-[var(--dark-text)] border-l-4 border-transparent;
+  }
+  .tab-active {
+    @apply border-b-2 border-[var(--primary-color)] text-[var(--primary-color)] font-semibold;
+  }
+  .tab-inactive {
+    @apply border-b-2 border-transparent text-[var(--medium-text)] hover:text-[var(--dark-text)];
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out;
+}

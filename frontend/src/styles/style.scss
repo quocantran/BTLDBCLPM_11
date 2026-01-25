@@ -1,0 +1,30 @@
+@use './variables.scss';
+
+/** components */
+
+/** pages */
+@use './pages/user.scss';
+@use './pages/main.scss';
+
+html,
+body {
+  background-color: #ffffff !important;
+  color: #111827;
+}
+
+.ant-menu {
+  .ant-menu-item,
+  .ant-menu-item-selected {
+    background-color: transparent;
+  }
+
+  .ant-menu-item-selected {
+    .ant-menu-title-content {
+      color: #111827;
+    }
+  }
+
+  .ant-menu-title-content {
+    color: #4b5563;
+  }
+}

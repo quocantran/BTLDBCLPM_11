@@ -1,0 +1,20 @@
+.exam-results-table .ant-table-thead > tr > th {
+  background-color: #f8fafc;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+
+.exam-results-table .ant-table-tbody > tr:hover > td {
+  background-color: #f1f5f9;
+}
+
+.exam-results-table .ant-table-cell {
+  padding: 16px;
+}
+
+.exam-results-table .ant-pagination {
+  margin-top: 16px;
+}

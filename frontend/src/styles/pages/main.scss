@@ -1,0 +1,138 @@
+// Main Layout Styles
+.main-layout {
+  .sidebar {
+    transition: width 0.3s ease-in-out;
+
+    &.collapsed {
+      width: 4rem;
+
+      .logo-text {
+        opacity: 0;
+        transform: translateX(-10px);
+      }
+
+      .menu-item-text {
+        opacity: 0;
+        transform: translateX(-10px);
+      }
+    }
+  }
+
+  .main-content {
+    transition: margin-left 0.3s ease-in-out;
+  }
+
+  .mobile-sidebar-toggle {
+    @media (min-width: 1024px) {
+      display: none;
+    }
+  }
+
+  .mobile-overlay {
+    @media (min-width: 1024px) {
+      display: none;
+    }
+  }
+
+  // Responsive breakpoints
+  @media (max-width: 1023px) {
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.3s ease-in-out;
+
+      &.open {
+        transform: translateX(0);
+      }
+    }
+  }
+
+  // Dark mode support
+  .dark {
+    .sidebar {
+      background-color: #1f2937;
+      border-color: #374151;
+    }
+
+    .navbar {
+      background-color: #1f2937;
+      border-color: #374151;
+    }
+  }
+}
+
+// Animation classes
+.fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-in-left {
+  animation: slideInLeft 0.3s ease-in-out;
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+// Menu item hover effects
+.menu-item {
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.1),
+      transparent
+    );
+    transition: left 0.5s;
+  }
+
+  &:hover::before {
+    left: 100%;
+  }
+}
+
+// Notification badge animation
+.notification-badge {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
