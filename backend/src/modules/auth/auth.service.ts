@@ -270,7 +270,7 @@ export class AuthService {
 
     await this.userModel.findByIdAndUpdate(user._id, {
       passwordHash: newPasswordHash,
-      refreshTokenHash: undefined,
+      $unset: { refreshTokenHash: 1 },
     });
 
     await this.passwordResetTokenModel.updateOne(
@@ -328,7 +328,7 @@ export class AuthService {
     // Update password and clear refresh token for security
     await this.userModel.findByIdAndUpdate(userId, {
       passwordHash: newPasswordHash,
-      refreshTokenHash: undefined, // Clear refresh token to force re-login
+      $unset: { refreshTokenHash: 1 }, // Clear refresh token to force re-login
     });
 
     return { message: 'Password changed successfully' };

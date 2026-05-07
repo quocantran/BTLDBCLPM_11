@@ -5,6 +5,7 @@ export default registerAs('blockchain', () => ({
     process.env.BLOCKCHAIN_RPC_URL ||
     'https://api.avax-test.network/ext/bc/C/rpc', // Avalanche Fuji testnet default
   privateKey: process.env.BLOCKCHAIN_PRIVATE_KEY || '',
+  ownerPrivateKey: process.env.BLOCKCHAIN_OWNER_PRIVATE_KEY || '',
   contractAddress:
     process.env.CONTRACT_ADDRESS ||
     '0x3a2b467eE46d93c71B0BAfc2eAc3CE399103aEd2',

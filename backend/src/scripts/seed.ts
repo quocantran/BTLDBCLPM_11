@@ -10,7 +10,20 @@ import { Question } from '../database/schemas/question.schema';
 import { Exam } from '../database/schemas/exam.schema';
 import { Submission } from '../database/schemas/submission.schema';
 import { Certificate } from '../database/schemas/certificate.schema';
+import { Notification } from '../database/schemas/notification.schema';
+import { PasswordResetToken } from '../database/schemas/password-reset-token.schema';
 import { generatePrefixedPublicId } from '../common/utils/public-id.util';
+import {
+  SEED_CERTIFICATES,
+  SEED_COURSES,
+  SEED_ENROLLMENTS,
+  SEED_EXAMS,
+  SEED_NOTIFICATIONS,
+  SEED_PASSWORD,
+  SEED_QUESTIONS,
+  SEED_SUBMISSIONS,
+  SEED_USERS,
+} from './seed_data';
 
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(AppModule);
@@ -28,6 +41,12 @@ async function bootstrap() {
   const certificateModel = app.get<Model<Certificate>>(
     getModelToken(Certificate.name),
   );
+  const notificationModel = app.get<Model<Notification>>(
+    getModelToken(Notification.name),
+  );
+  const passwordResetTokenModel = app.get<Model<PasswordResetToken>>(
+    getModelToken(PasswordResetToken.name),
+  );
 
   try {
     console.log('🌱 Seeding database...');
@@ -35,6 +54,8 @@ async function bootstrap() {
     // Clear existing data
     console.log('📝 Clearing existing data...');
     await Promise.all([
+      passwordResetTokenModel.deleteMany({}),
+      notificationModel.deleteMany({}),
       certificateModel.deleteMany({}),
       submissionModel.deleteMany({}),
       examModel.deleteMany({}),
@@ -46,306 +67,236 @@ async function bootstrap() {
 
     // Create sample users
     console.log('👥 Creating sample users...');
-    const hashedPassword = await argon2.hash('password123');
+    const hashedPassword = await argon2.hash(SEED_PASSWORD);
+    const createdUsers = await userModel.insertMany(
+      SEED_USERS.map((user) => ({
+        username: user.username,
+        email: user.email,
+        passwordHash: hashedPassword,
+        fullName: user.fullName,
+        dateOfBirth: new Date(user.dateOfBirth),
+        role: user.role,
+        walletAddress: user.walletAddress,
+      })),
+    );
 
-    const users = await userModel.insertMany([
-      {
-        username: 'admin',
-        email: 'admin@edu-chain.com',
-        passwordHash: hashedPassword,
-        fullName: 'System Administrator',
-        dateOfBirth: new Date('1985-05-15'),
-        role: 'admin',
-        walletAddress: '0x1234567890abcdef1234567890abcdef12345678',
-      },
-      {
-        username: 'teacher.alice',
-        email: 'teacher1@edu-chain.com',
-        passwordHash: hashedPassword,
-        fullName: 'Dr. Alice Johnson',
-        dateOfBirth: new Date('1978-03-22'),
-        role: 'teacher',
-        walletAddress: '0x2345678901abcdef2345678901abcdef23456789',
-      },
-      {
-        username: 'teacher.bob',
-        email: 'teacher2@edu-chain.com',
-        passwordHash: hashedPassword,
-        fullName: 'Prof. Bob Smith',
-        dateOfBirth: new Date('1975-11-08'),
-        role: 'teacher',
-        walletAddress: '0x3456789012abcdef3456789012abcdef34567890',
-      },
-      {
-        username: 'student.john',
-        email: 'student1@edu-chain.com',
-        passwordHash: hashedPassword,
-        fullName: 'John Doe',
-        dateOfBirth: new Date('2000-01-15'),
-        role: 'student',
-        walletAddress: '0x4567890123abcdef4567890123abcdef45678901',
-      },
-      {
-        username: 'student.jane',
-        email: 'student2@edu-chain.com',
-        passwordHash: hashedPassword,
-        fullName: 'Jane Smith',
-        dateOfBirth: new Date('1999-08-20'),
-        role: 'student',
-        walletAddress: '0x5678901234abcdef5678901234abcdef56789012',
-      },
-      {
-        username: 'student.michael',
-        email: 'student3@edu-chain.com',
-        passwordHash: hashedPassword,
-        fullName: 'Michael Brown',
-        dateOfBirth: new Date('2001-12-03'),
-        role: 'student',
-      },
-    ]);
-
-    const [, teacher1, teacher2, student1, student2, student3] = users;
+    const usersByKey = new Map(
+      SEED_USERS.map((seedUser, index) => [seedUser.key, createdUsers[index]]),
+    );
 
     // Create sample courses
     console.log('📚 Creating sample courses...');
-    const courseSeedData = [
-      {
-        courseName: 'Introduction to Computer Science',
-        teacherId: teacher1._id,
-      },
-      {
-        courseName: 'Web Development Fundamentals',
-        teacherId: teacher1._id,
-      },
-      {
-        courseName: 'Database Management Systems',
-        teacherId: teacher2._id,
-      },
-      {
-        courseName: 'Data Structures and Algorithms',
-        teacherId: teacher2._id,
-      },
-    ];
-
     const courseDocuments = [] as Array<Record<string, unknown>>;
-    for (const payload of courseSeedData) {
+    for (const payload of SEED_COURSES) {
+      const teacher = usersByKey.get(payload.teacherKey);
+      if (!teacher) {
+        throw new Error(`Teacher ${payload.teacherKey} not found in seed map`);
+      }
       const publicId = await generatePrefixedPublicId('C', courseModel);
-      courseDocuments.push({ ...payload, publicId });
+      courseDocuments.push({
+        publicId,
+        courseName: payload.courseName,
+        teacherId: teacher._id,
+      });
     }
 
-    const courses = await courseModel.insertMany(courseDocuments);
-
-    const [course1, course2, course3, course4] = courses;
+    const createdCourses = await courseModel.insertMany(courseDocuments);
+    const coursesByKey = new Map(
+      SEED_COURSES.map((seedCourse, index) => [seedCourse.key, createdCourses[index]]),
+    );
 
     // Create enrollments
     console.log('📝 Creating enrollments...');
-    await enrollmentModel.insertMany([
-      { studentId: student1._id, courseId: course1._id },
-      { studentId: student1._id, courseId: course2._id },
-      { studentId: student2._id, courseId: course1._id },
-      { studentId: student2._id, courseId: course3._id },
-      { studentId: student3._id, courseId: course2._id },
-      { studentId: student3._id, courseId: course4._id },
-    ]);
+    await enrollmentModel.insertMany(
+      SEED_ENROLLMENTS.map((seedEnrollment) => {
+        const student = usersByKey.get(seedEnrollment.studentKey);
+        const course = coursesByKey.get(seedEnrollment.courseKey);
+        if (!student || !course) {
+          throw new Error(
+            `Enrollment relation invalid: ${seedEnrollment.studentKey} -> ${seedEnrollment.courseKey}`,
+          );
+        }
+        return {
+          studentId: student._id,
+          courseId: course._id,
+        };
+      }),
+    );
 
     // Create sample questions
     console.log('❓ Creating sample questions...');
-    const questions = await questionModel.insertMany([
-      {
-        content: 'What is the time complexity of binary search?',
-        teacherId: teacher1._id,
-        answerQuestion: 2,
-        answer: [
-          { content: 'O(n)', isCorrect: false },
-          { content: 'O(log n)', isCorrect: true },
-          { content: 'O(n^2)', isCorrect: false },
-          { content: 'O(1)', isCorrect: false },
-        ],
-      },
-      {
-        content: 'Which of the following is NOT a programming paradigm?',
-        teacherId: teacher1._id,
-        answerQuestion: 3,
-        answer: [
-          { content: 'Object-oriented', isCorrect: false },
-          { content: 'Functional', isCorrect: false },
-          { content: 'Relational', isCorrect: true },
-          { content: 'Procedural', isCorrect: false },
-        ],
-      },
-      {
-        content: 'What does HTML stand for?',
-        teacherId: teacher1._id,
-        answerQuestion: 1,
-        answer: [
-          { content: 'HyperText Markup Language', isCorrect: true },
-          { content: 'Home Tool Markup Language', isCorrect: false },
-          { content: 'Hyperlinks and Text Markup Language', isCorrect: false },
-          { content: 'Hyper Tool Markup Language', isCorrect: false },
-        ],
-      },
-      {
-        content: 'Which SQL command is used to retrieve data?',
-        teacherId: teacher2._id,
-        answerQuestion: 2,
-        answer: [
-          { content: 'INSERT', isCorrect: false },
-          { content: 'SELECT', isCorrect: true },
-          { content: 'UPDATE', isCorrect: false },
-          { content: 'DELETE', isCorrect: false },
-        ],
-      },
-      {
-        content: 'What is a primary key in a database?',
-        teacherId: teacher2._id,
-        answerQuestion: 1,
-        answer: [
-          { content: 'A unique identifier for each record', isCorrect: true },
-          { content: 'A foreign key reference', isCorrect: false },
-          { content: 'An index for faster queries', isCorrect: false },
-          { content: 'A backup key', isCorrect: false },
-        ],
-      },
-    ]);
+    const createdQuestions = await questionModel.insertMany(
+      SEED_QUESTIONS.map((seedQuestion) => {
+        const teacher = usersByKey.get(seedQuestion.teacherKey);
+        const course = coursesByKey.get(seedQuestion.courseKey);
+        if (!teacher || !course) {
+          throw new Error(`Question relation invalid: ${seedQuestion.key}`);
+        }
+        return {
+          content: seedQuestion.content,
+          teacherId: teacher._id,
+          courseId: course._id,
+          answerQuestion: seedQuestion.answerQuestion,
+          answer: seedQuestion.answer,
+        };
+      }),
+    );
+
+    const questionsByKey = new Map(
+      SEED_QUESTIONS.map((seedQuestion, index) => [seedQuestion.key, createdQuestions[index]]),
+    );
 
     // Create sample exams
     console.log('📋 Creating sample exams...');
-    const examSeedData = [
-      {
-        title: 'Computer Science Midterm Exam',
-        durationMinutes: 90,
-        startTime: new Date('2025-10-15T09:00:00Z'),
-        endTime: new Date('2025-10-15T12:00:00Z'),
-        status: 'active',
-        courseId: course1._id,
-        questions: [questions[0]._id, questions[1]._id, questions[2]._id],
-        rateScore: 70,
-      },
-      {
-        title: 'Web Development Final Exam',
-        durationMinutes: 120,
-        startTime: new Date('2025-11-20T14:00:00Z'),
-        endTime: new Date('2025-11-20T18:00:00Z'),
-        status: 'draft',
-        courseId: course2._id,
-        questions: [questions[2]._id],
-        rateScore: 75,
-      },
-      {
-        title: 'Database Quiz 1',
-        durationMinutes: 45,
-        startTime: new Date('2025-09-25T10:00:00Z'),
-        endTime: new Date('2025-09-25T12:00:00Z'),
-        status: 'completed',
-        courseId: course3._id,
-        questions: [questions[3]._id, questions[4]._id],
-        rateScore: 80,
-      },
-    ];
-
     const examDocuments = [] as Array<Record<string, unknown>>;
-    for (const payload of examSeedData) {
+    for (const payload of SEED_EXAMS) {
+      const course = coursesByKey.get(payload.courseKey);
+      if (!course) {
+        throw new Error(`Exam course invalid: ${payload.key}`);
+      }
+      const examQuestionIds = payload.questionKeys.map((questionKey) => {
+        const question = questionsByKey.get(questionKey);
+        if (!question) {
+          throw new Error(
+            `Exam question invalid: exam=${payload.key}, question=${questionKey}`,
+          );
+        }
+        return question._id;
+      });
       const publicId = await generatePrefixedPublicId('E', examModel);
-      examDocuments.push({ ...payload, publicId });
+      examDocuments.push({
+        publicId,
+        title: payload.title,
+        durationMinutes: payload.durationMinutes,
+        startTime: payload.window.startTime,
+        endTime: payload.window.endTime,
+        status: payload.window.status,
+        courseId: course._id,
+        questions: examQuestionIds,
+        rateScore: payload.rateScore,
+      });
     }
 
-    const exams = await examModel.insertMany(examDocuments);
-
-    const [exam1, , exam3] = exams;
+    const createdExams = await examModel.insertMany(examDocuments);
+    const examsByKey = new Map(
+      SEED_EXAMS.map((seedExam, index) => [seedExam.key, createdExams[index]]),
+    );
 
     // Create sample submissions
     console.log('📤 Creating sample submissions...');
-    const submissions = await submissionModel.insertMany([
-      {
-        studentId: student1._id,
-        examId: exam1._id,
-        score: 85,
-        status: 'graded',
-        submittedAt: new Date('2025-10-15T10:30:00Z'),
-        answers: [
-          { questionId: questions[0]._id, answerNumber: 2 },
-          { questionId: questions[1]._id, answerNumber: 3 },
-          { questionId: questions[2]._id, answerNumber: 1 },
-        ],
-      },
-      {
-        studentId: student2._id,
-        examId: exam1._id,
-        score: 92,
-        status: 'graded',
-        submittedAt: new Date('2025-10-15T10:45:00Z'),
-        answers: [
-          { questionId: questions[0]._id, answerNumber: 2 },
-          { questionId: questions[1]._id, answerNumber: 3 },
-          { questionId: questions[2]._id, answerNumber: 1 },
-        ],
-      },
-      {
-        studentId: student2._id,
-        examId: exam3._id,
-        score: 88,
-        status: 'graded',
-        submittedAt: new Date('2025-09-25T10:30:00Z'),
-        answers: [
-          { questionId: questions[3]._id, answerNumber: 2 },
-          { questionId: questions[4]._id, answerNumber: 1 },
-        ],
-      },
-    ]);
+    const createdSubmissions = await submissionModel.insertMany(
+      SEED_SUBMISSIONS.map((seedSubmission) => {
+        const student = usersByKey.get(seedSubmission.studentKey);
+        const exam = examsByKey.get(seedSubmission.examKey);
+        if (!student || !exam) {
+          throw new Error(
+            `Submission relation invalid: ${seedSubmission.studentKey} -> ${seedSubmission.examKey}`,
+          );
+        }
+
+        return {
+          studentId: student._id,
+          examId: exam._id,
+          score: seedSubmission.score,
+          status: seedSubmission.status,
+          submittedAt: seedSubmission.submittedAt,
+          answers: seedSubmission.answers.map((answer) => {
+            const question = questionsByKey.get(answer.questionKey);
+            if (!question) {
+              throw new Error(
+                `Submission answer invalid: question=${answer.questionKey}`,
+              );
+            }
+            return {
+              questionId: question._id,
+              answerNumber: answer.answerNumber,
+            };
+          }),
+        };
+      }),
+    );
 
     // Create sample certificates
     console.log('🏆 Creating sample certificates...');
-    await certificateModel.insertMany([
-      {
-        studentId: student1._id,
-        courseId: course1._id,
-        status: 'issued',
-        submissionId: submissions[0]._id,
-        tokenId: 'EDU-CERT-001',
-        ipfsHash: 'QmXyZ123abc456def789ghi012jkl345mno678pqr901stu234',
-        transactionHash:
-          '0xabcdef123456789abcdef123456789abcdef123456789abcdef123456789abcdef',
-        issuedAt: new Date('2025-10-16T08:00:00Z'),
-        outdateTime: new Date('2030-10-16T08:00:00Z'),
-      },
-      {
-        studentId: student2._id,
-        courseId: course1._id,
-        status: 'issued',
-        submissionId: submissions[1]._id,
-        tokenId: 'EDU-CERT-002',
-        ipfsHash: 'QmAbc456def789ghi012jkl345mno678pqr901stu234vwx567',
-        transactionHash:
-          '0x123456789abcdef123456789abcdef123456789abcdef123456789abcdef123456',
-        issuedAt: new Date('2025-10-16T08:15:00Z'),
-        outdateTime: new Date('2030-10-16T08:15:00Z'),
-      },
-      {
-        studentId: student2._id,
-        courseId: course3._id,
-        status: 'pending',
-        submissionId: submissions[2]._id,
-      },
-    ]);
+    const createdCertificates = await certificateModel.insertMany(
+      SEED_CERTIFICATES.map((seedCertificate) => {
+        const student = usersByKey.get(seedCertificate.studentKey);
+        const course = coursesByKey.get(seedCertificate.courseKey);
+        const submission = createdSubmissions[seedCertificate.submissionRef];
+
+        if (!student || !course || !submission) {
+          throw new Error(
+            `Certificate relation invalid: student=${seedCertificate.studentKey}, course=${seedCertificate.courseKey}, submissionRef=${seedCertificate.submissionRef}`,
+          );
+        }
+
+        return {
+          studentId: student._id,
+          courseId: course._id,
+          submissionId: submission._id,
+          status: seedCertificate.status,
+          tokenId: seedCertificate.tokenId,
+          ipfsHash: seedCertificate.ipfsHash,
+          ipfsImage: seedCertificate.ipfsImage,
+          transactionHash: seedCertificate.transactionHash,
+          issuedAt: seedCertificate.issuedAt,
+          outdateTime: seedCertificate.outdateTime,
+        };
+      }),
+    );
+
+    // Create sample notifications
+    console.log('🔔 Creating sample notifications...');
+    await notificationModel.insertMany(
+      SEED_NOTIFICATIONS.map((seedNotification, index) => {
+        const recipient = usersByKey.get(seedNotification.recipientKey);
+        if (!recipient) {
+          throw new Error(
+            `Notification recipient invalid: ${seedNotification.recipientKey}`,
+          );
+        }
+
+        const certificate = createdCertificates[0];
+        const activeExam = examsByKey.get('exam_web_active');
+
+        return {
+          recipientId: recipient._id,
+          audience: seedNotification.audience,
+          category: seedNotification.category,
+          type: seedNotification.type,
+          title: seedNotification.title,
+          message: seedNotification.message,
+          actionUrl: seedNotification.actionUrl,
+          examId: index === 1 ? activeExam?._id : undefined,
+          certificateId: index === 0 ? certificate?._id : undefined,
+          metadata: {
+            source: 'seed-script',
+            createdBy: 'src/scripts/seed.ts',
+          },
+          isRead: seedNotification.isRead ?? false,
+        };
+      }),
+    );
 
     console.log('✅ Database seeded successfully!');
     console.log(`
 📊 Sample Data Created:
-- 👥 Users: 6 (1 admin, 2 teachers, 3 students)
-- 📚 Courses: 4
-- 📝 Enrollments: 6
-- ❓ Questions: 5 (with 4 choices each)
-- 📋 Exams: 3
-- 📤 Submissions: 3
-- 🏆 Certificates: 3
+- 👥 Users: ${createdUsers.length} (1 admin, 2 teachers, 3 students)
+- 📚 Courses: ${createdCourses.length}
+- 📝 Enrollments: ${SEED_ENROLLMENTS.length}
+- ❓ Questions: ${createdQuestions.length}
+- 📋 Exams: ${createdExams.length}
+- 📤 Submissions: ${createdSubmissions.length}
+- 🏆 Certificates: ${createdCertificates.length}
+- 🔔 Notifications: ${SEED_NOTIFICATIONS.length}
 
-🔐 Login Credentials (all passwords: password123):
-- Admin: admin@edu-chain.com
-- Teacher 1: teacher1@edu-chain.com  
-- Teacher 2: teacher2@edu-chain.com
-- Student 1: student1@edu-chain.com
-- Student 2: student2@edu-chain.com
-- Student 3: student3@edu-chain.com
+🔐 Login Credentials (all passwords: ${SEED_PASSWORD}):
+- Admin: admin@academix.local
+- Teacher 1: teacher1@academix.local
+- Teacher 2: teacher2@academix.local
+- Student 1: student1@academix.local
+- Student 2: student2@academix.local
+- Student 3: student3@academix.local
     `);
   } catch (error) {
     console.error('❌ Error seeding database:', error);

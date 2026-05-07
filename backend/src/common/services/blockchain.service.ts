@@ -6,7 +6,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CONTRACT_ABI_2 as NFT_CONTRACT_ABI } from '../utils/abi';
-import { CONTRACT_ADDRESS, DEFAULT_NFT_RECIPIENT } from '../utils/constant';
+import { DEFAULT_NFT_RECIPIENT } from '../utils/constant';
 
 // Dynamic import ethers để tránh lỗi khi chưa cài package
 // Cần cài đặt: npm install ethers@^6.0.0
@@ -39,6 +39,7 @@ export class BlockchainService {
   private provider: any;
   private contract: any;
   private signer: any = null;
+  private contractAddress: string;
 
   constructor(private configService: ConfigService) {
     if (!ethers) {
@@ -61,12 +62,27 @@ export class BlockchainService {
     };
     this.provider = new ethers.JsonRpcProvider(rpcUrl, chainConfig);
 
-    // Lấy private key từ environment (dùng để sign transactions)
-    const privateKey = this.configService.get<string>('BLOCKCHAIN_PRIVATE_KEY');
+    // Ưu tiên ví owner/minter để thực hiện write operations.
+    const ownerPrivateKey =
+      this.configService.get<string>('blockchain.ownerPrivateKey') ||
+      this.configService.get<string>('BLOCKCHAIN_OWNER_PRIVATE_KEY');
+    const privateKey =
+      ownerPrivateKey ||
+      this.configService.get<string>('blockchain.privateKey') ||
+      this.configService.get<string>('BLOCKCHAIN_PRIVATE_KEY');
+    this.contractAddress =
+      this.configService.get<string>('blockchain.contractAddress') ||
+      this.configService.get<string>('CONTRACT_ADDRESS') ||
+      '';
+    if (!this.contractAddress || !ethers.isAddress(this.contractAddress)) {
+      throw new Error(
+        `Invalid CONTRACT_ADDRESS: "${this.contractAddress}". Please check blockchain.contractAddress / CONTRACT_ADDRESS in environment variables.`,
+      );
+    }
 
     // Khởi tạo contract instance
     this.contract = new ethers.Contract(
-      CONTRACT_ADDRESS,
+      this.contractAddress,
       NFT_CONTRACT_ABI,
       this.provider,
     );
@@ -79,7 +95,7 @@ export class BlockchainService {
       this.logger.log('Blockchain service initialized with signer');
     } else {
       this.logger.warn(
-        'BLOCKCHAIN_PRIVATE_KEY not set. Only read operations will be available.',
+        'No blockchain signer key found. Set BLOCKCHAIN_OWNER_PRIVATE_KEY (recommended) or BLOCKCHAIN_PRIVATE_KEY. Only read operations are available.',
       );
     }
   }
@@ -95,7 +111,7 @@ export class BlockchainService {
     try {
       if (!this.signer) {
         throw new Error(
-          'Signer not initialized. Please set BLOCKCHAIN_PRIVATE_KEY in environment variables.',
+          'Signer not initialized. Please set BLOCKCHAIN_OWNER_PRIVATE_KEY (recommended) or BLOCKCHAIN_PRIVATE_KEY in environment variables.',
         );
       }
 
@@ -117,6 +133,8 @@ export class BlockchainService {
       }
 
       const metadataUri = this.ensureIpfsUri(ipfsHash);
+      await this.assertContractDeployed();
+      await this.assertMintPermission();
 
       // Lấy tokenId tiếp theo để logging (nếu contract hỗ trợ)
       let nextTokenId: bigint | undefined;
@@ -202,6 +220,58 @@ export class BlockchainService {
     }
   }
 
+  private async assertMintPermission(): Promise<void> {
+    if (!this.signer) {
+      return;
+    }
+
+    if (typeof this.contract.owner !== 'function') {
+      return;
+    }
+
+    let ownerAddress: string | null = null;
+    try {
+      ownerAddress = await this.contract.owner();
+    } catch (error: unknown) {
+      if (this.isBadDataError(error)) {
+        this.logger.warn(
+          `Contract ${this.contractAddress} does not expose owner(). Skipping owner-based mint permission pre-check.`,
+        );
+        return;
+      }
+      throw error;
+    }
+
+    const signerAddress = await this.signer.getAddress();
+
+    if (
+      ownerAddress &&
+      ownerAddress.toLowerCase() !== signerAddress.toLowerCase()
+    ) {
+      throw new Error(
+        `Signer ${signerAddress} is not contract owner ${ownerAddress} for contract ${this.contractAddress}. Mint requires owner/minter permission. Configure BLOCKCHAIN_OWNER_PRIVATE_KEY with the private key of ${ownerAddress}, or transfer contract ownership to ${signerAddress}.`,
+      );
+    }
+  }
+
+  private async assertContractDeployed(): Promise<void> {
+    const bytecode = await this.provider.getCode(this.contractAddress);
+    if (!bytecode || bytecode === '0x') {
+      throw new Error(
+        `No contract bytecode found at ${this.contractAddress}. Please check CONTRACT_ADDRESS and BLOCKCHAIN_RPC_URL/chain.`,
+      );
+    }
+  }
+
+  private isBadDataError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'BAD_DATA'
+    );
+  }
+
   private ensureIpfsUri(ipfsHash: string): string {
     if (!ipfsHash) {
       throw new Error('IPFS hash is required');
@@ -226,13 +296,26 @@ export class BlockchainService {
         `Getting certificate: tokenId=${tokenIdBigInt.toString()}`,
       );
 
-      const [owner, tokenUri, contractOwner] = await Promise.all([
+      await this.assertContractDeployed();
+
+      const [owner, tokenUri] = await Promise.all([
         this.contract.ownerOf(tokenIdBigInt),
         this.contract.tokenURI(tokenIdBigInt),
-        typeof this.contract.owner === 'function'
-          ? this.contract.owner()
-          : DEFAULT_NFT_RECIPIENT,
       ]);
+
+      let contractOwner = DEFAULT_NFT_RECIPIENT;
+      if (typeof this.contract.owner === 'function') {
+        try {
+          contractOwner = await this.contract.owner();
+        } catch (error: unknown) {
+          if (!this.isBadDataError(error)) {
+            throw error;
+          }
+          this.logger.warn(
+            `Contract ${this.contractAddress} does not expose owner(). Using default issuer in read response.`,
+          );
+        }
+      }
 
       return {
         cid: tokenUri,

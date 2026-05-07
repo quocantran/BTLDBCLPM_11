@@ -9,6 +9,7 @@ import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 import pinataConfig from './config/pinata.config';
+import blockchainConfig from './config/blockchain.config';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { CertificateModule } from './modules/certificates/certificate.module';
@@ -46,7 +47,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, jwtConfig, pinataConfig],
+      load: [appConfig, databaseConfig, jwtConfig, pinataConfig, blockchainConfig],
       envFilePath: '.env',
     }),
     ScheduleModule.forRoot(),
