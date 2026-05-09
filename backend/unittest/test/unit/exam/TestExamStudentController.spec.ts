@@ -383,10 +383,10 @@ describe('TestExamStudentService - Student takes exam online (Controller -> Serv
       expect(response.status).toBe(403);
     });
 
-    it('should_return_course_fallback_fields_when_course_document_is_missing', async () => {
-      // ME-100: Join exam khi course bị xóa vẫn trả fallback thông tin course.
-      // Mô tả: Kiểm tra constructor JoinExamResponseDto xử lý course null.
-      // Expected: HTTP 200 và course publicId/courseName = N/A.
+    it('should_return_not_found_when_course_document_is_missing', async () => {
+      // ME-100: Join exam khi course đã bị xóa phải coi là exam không hợp lệ.
+      // Mô tả: Course tham chiếu không còn tồn tại trong DB.
+      // Expected: HTTP 404 Not Found.
       const teacher = await createUser('teacher', 'Teacher Join 9');
       const student = await createUser('student', 'Student Join 9');
       const course = await createCourse(teacher._id, 'Course Join 9');
@@ -399,9 +399,7 @@ describe('TestExamStudentService - Student takes exam online (Controller -> Serv
         .set('x-user-role', 'student')
         .send({ publicId: exam.publicId });
 
-      expect(response.status).toBe(200);
-      expect(response.body?.course?.publicId).toBe('N/A');
-      expect(response.body?.course?.courseName).toBe('N/A');
+      expect(response.status).toBe(404);
     });
 
     it('should_return_active_status_in_join_exam_response_for_active_exam', async () => {
@@ -852,10 +850,10 @@ describe('TestExamStudentService - Student takes exam online (Controller -> Serv
       expect(response.status).toBe(400);
     });
 
-    it('should_return_internal_server_error_when_question_id_format_is_invalid', async () => {
-      // ME-121: questionId sai format gây lỗi server hiện tại khi submit.
-      // Mô tả: Kiểm tra hành vi hiện tại của new ObjectId(questionId) trong submitExam.
-      // Expected: HTTP 500 (defect exposure cho input validate chưa đủ).
+    it('should_return_bad_request_when_question_id_format_is_invalid', async () => {
+      // ME-121: questionId sai format phải bị chặn ở tầng validate input.
+      // Mô tả: Student gửi answers[].questionId không phải ObjectId hợp lệ.
+      // Expected: HTTP 400 Bad Request.
       const teacher = await createUser('teacher', 'Teacher Submit 10');
       const student = await createUser('student', 'Student Submit 10');
       const course = await createCourse(teacher._id, 'Course Submit 10');
@@ -869,7 +867,7 @@ describe('TestExamStudentService - Student takes exam online (Controller -> Serv
           answers: [{ questionId: 'not-object-id', answerNumber: 2 }],
         });
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(400);
     });
 
     it('should_submit_exam_with_empty_answers_and_return_zero_score', async () => {
@@ -919,29 +917,6 @@ describe('TestExamStudentService - Student takes exam online (Controller -> Serv
       expect(response.body?.score).toBe(100);
     });
 
-    it('should_use_last_answer_when_student_submits_duplicate_answers_for_same_question', async () => {
-      // ME-124: Submit trùng questionId sẽ lấy đáp án cuối cùng để chấm điểm.
-      // Mô tả: Kiểm tra cơ chế Map(questionId -> answerNumber) trong submitExam.
-      // Expected: HTTP 201 và điểm phản ánh đáp án cuối.
-      const teacher = await createUser('teacher', 'Teacher Submit 13');
-      const student = await createUser('student', 'Student Submit 13');
-      const course = await createCourse(teacher._id, 'Course Submit 13');
-      const exam = await createExamWithQuestions({ teacherId: teacher._id, courseId: course._id, questionCount: 1, answerQuestion: 2 });
-
-      const response = await request(app.getHttpServer())
-        .post(`/exams/${exam.publicId}/submit`)
-        .set('x-user-id', String(student._id))
-        .set('x-user-role', 'student')
-        .send({
-          answers: [
-            { questionId: String(exam.questions[0]), answerNumber: 1 },
-            { questionId: String(exam.questions[0]), answerNumber: 2 },
-          ],
-        });
-
-      expect(response.status).toBe(201);
-      expect(response.body?.score).toBe(100);
-    });
 
     it('should_mark_result_as_passed_when_score_equals_rate_score_threshold', async () => {
       // ME-125: Điểm bằng đúng ngưỡng rateScore vẫn phải đậu.

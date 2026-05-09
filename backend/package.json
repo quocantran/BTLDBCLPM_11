@@ -48,6 +48,10 @@
     "test:notifications:controller": "jest --config ./unittest/jest.unittest.json --testPathPatterns=TestNotificationsController.spec.ts --verbose",
     "test:notifications:gateway": "jest --config ./unittest/jest.unittest.json --testPathPatterns=TestNotificationsGateway.spec.ts --verbose",
     "test:notifications:coverage": "jest --config ./unittest/jest.unittest.json --testPathPatterns=\"TestNotifications(Service|Controller|Gateway).spec.ts\" --coverage --collectCoverageFrom=\"src/modules/notifications/notifications.service.ts\" --collectCoverageFrom=\"src/modules/notifications/notifications.gateway.ts\" --verbose",
+    "test:dashboard:service": "jest --config ./unittest/jest.unittest.json --testPathPatterns=\"Test(Student)?DashboardService.spec.ts\" --verbose",
+    "test:dashboard:controller": "jest --config ./unittest/jest.unittest.json --testPathPatterns=\"Test(Student)?DashboardController.spec.ts\" --verbose",
+    "test:dashboard:utils": "jest --config ./unittest/jest.unittest.json --testPathPatterns=TestDashboardUtils.spec.ts --verbose",
+    "test:dashboard:coverage": "jest --config ./unittest/jest.unittest.json --testPathPatterns=\"Test(Student)?Dashboard(Service|Controller).spec.ts\" --coverage --collectCoverageFrom=\"src/modules/dashboard/dashboard.service.ts\" --collectCoverageFrom=\"src/modules/dashboard/dashboard.controller.ts\" --collectCoverageFrom=\"src/modules/dashboard/student/student-dashboard.service.ts\" --collectCoverageFrom=\"src/modules/dashboard/student/student-dashboard.controller.ts\" --verbose",
     "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts"
   },
   "dependencies": {

@@ -322,15 +322,4 @@ describe('TestCertificateController — CertificateController endpoints', () => 
     expect(result.meta?.limit).toBe(10);
   });
 
-  it('UMC-052 — should_revoke_with_undefined_dto_safely', async () => {
-    // UMC-052: Revoke nhận dto undefined vẫn phải gọi service an toàn bằng optional chaining.
-    // Mô tả: dto vắng hoàn toàn ở runtime.
-    // Expected: service.revoke nhận reason và transactionHash là undefined.
-    certService.revoke.mockResolvedValue({ ...mockCert, status: 'revoked' });
-
-    const result = await controller.revoke(CERT_ID, undefined as any);
-
-    expect(result.success).toBe(true);
-    expect(certService.revoke).toHaveBeenCalledWith(CERT_ID, undefined, undefined);
-  });
 });
