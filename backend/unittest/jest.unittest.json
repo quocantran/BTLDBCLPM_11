@@ -1,18 +1,27 @@
 {
   "moduleFileExtensions": ["js", "json", "ts"],
-  "rootDir": ".",
+  "rootDir": "..",
   "testEnvironment": "node",
-  "testRegex": "Test.*\\.spec\\.ts$",
-  "moduleDirectories": ["node_modules", "<rootDir>/../node_modules"],
+  "testRegex": "unittest/test/.*Test.*\\.spec\\.ts$",
+  "moduleDirectories": ["node_modules"],
   "moduleNameMapper": {
-    "^src/(.*)$": "<rootDir>/../src/$1"
+    "^src/(.*)$": "<rootDir>/src/$1"
   },
   "transform": {
     "^.+\\.(t|j)s$": [
-      "<rootDir>/../node_modules/ts-jest",
+      "<rootDir>/node_modules/ts-jest",
       {
-        "tsconfig": "<rootDir>/../tsconfig.json"
+        "tsconfig": "<rootDir>/tsconfig.json"
       }
     ]
-  }
+  },
+  "collectCoverageFrom": [
+    "<rootDir>/src/**/*.ts",
+    "!<rootDir>/src/**/*.dto.ts",
+    "!<rootDir>/src/**/*.schema.ts",
+    "!<rootDir>/src/**/*.module.ts",
+    "!<rootDir>/src/**/*.interface.ts",
+    "!<rootDir>/src/main.ts"
+  ],
+  "coverageDirectory": "<rootDir>/coverage/unit"
 }

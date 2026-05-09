@@ -1,0 +1,29 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts", "tsx"],
+  "rootDir": "..",
+  "testEnvironment": "jsdom",
+  "testRegex": "unittest/test/.*Test.*\\.spec\\.tsx?$",
+  "moduleDirectories": ["node_modules"],
+  "moduleNameMapper": {
+    "^@/(.*)$": "<rootDir>/src/$1",
+    "\\.(css|less|scss|sass)$": "identity-obj-proxy",
+    "\\.(jpg|jpeg|png|gif|webp|svg)$": "<rootDir>/unittest/fileMock.js"
+  },
+  "transform": {
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      {
+        "tsconfig": "<rootDir>/unittest/tsconfig.json",
+        "jsx": "react-jsx",
+        "diagnostics": false
+      }
+    ]
+  },
+  "setupFilesAfterEnv": ["<rootDir>/unittest/jest.setup.ts"],
+  "collectCoverageFrom": [
+    "<rootDir>/src/components/organisms/FaceVerificationModal/**/*.tsx",
+    "<rootDir>/src/hooks/useFaceApi.ts",
+    "<rootDir>/src/app/(privateLayout)/profile/UploadImage.tsx"
+  ],
+  "coverageDirectory": "<rootDir>/coverage/unit"
+}

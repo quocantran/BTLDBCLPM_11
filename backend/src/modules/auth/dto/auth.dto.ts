@@ -130,16 +130,6 @@ export class UpdateProfileDto {
   citizenId?: string;
 }
 
-export class VerifyFaceDto {
-  @ApiProperty({
-    description: 'Base64 encoded string of the webcam snapshot (image/jpeg)',
-    example: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
-  })
-  @IsString()
-  @IsNotEmpty()
-  webcamImage: string;
-}
-
 export class ForgotPasswordDto {
   @ApiProperty({
     example: 'student@example.com',
@@ -176,15 +166,3 @@ export class ResetPasswordDto {
   confirmPassword: string;
 }
 
-/**
- * DTO cho API xác thực ảnh profile
- */
-export class ValidateImageDto {
-  @ApiProperty({
-    description: 'Base64 encoded string of the image (image/jpeg or image/png)',
-    example: 'data:image/jpeg;base64,/9j/4AAQSk...',
-  })
-  @IsString()
-  @IsNotEmpty()
-  imageBase64: string;
-}

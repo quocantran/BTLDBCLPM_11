@@ -5,7 +5,13 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
-    "start": "next start"
+    "start": "next start",
+    "test:unit": "jest --config ./unittest/jest.unittest.json --verbose",
+    "test:face-verify": "jest --config ./unittest/jest.unittest.json --testPathPatterns TestFaceVerificationModal TestUseFaceApi TestUploadImage --verbose",
+    "test:face-verify:coverage": "jest --config ./unittest/jest.unittest.json --testPathPatterns TestFaceVerificationModal TestUseFaceApi TestUploadImage --coverage --verbose",
+    "test:face-verify:modal": "jest --config ./unittest/jest.unittest.json --testPathPatterns TestFaceVerificationModal --verbose",
+    "test:face-verify:hook": "jest --config ./unittest/jest.unittest.json --testPathPatterns TestUseFaceApi --verbose",
+    "test:face-verify:upload": "jest --config ./unittest/jest.unittest.json --testPathPatterns TestUploadImage --verbose"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -28,10 +34,19 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "identity-obj-proxy": "^3.0.0",
+    "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.4.1",
     "tailwindcss": "^4",
+    "ts-jest": "^29.4.9",
     "typescript": "^5"
   }
 }

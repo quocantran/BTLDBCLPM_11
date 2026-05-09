@@ -1,1201 +1,1458 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  INestApplication,
-  NotFoundException,
-  ValidationPipe,
-} from '@nestjs/common';
-import { APP_GUARD, Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
+import { getModelToken, getConnectionToken } from '@nestjs/mongoose';
 import {
-  getConnectionToken,
-  getModelToken,
-  MongooseModule,
-} from '@nestjs/mongoose';
-import { Connection, Model, Types } from 'mongoose';
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
-import request from 'supertest';
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
+import { Types } from 'mongoose';
 
-import { RolesGuard } from 'src/common/guards/roles.guard';
-import { Course, CourseSchema } from 'src/database/schemas/course.schema';
-import { Exam, ExamSchema } from 'src/database/schemas/exam.schema';
-import {
-  Question,
-  QuestionSchema,
-} from 'src/database/schemas/question.schema';
-import {
-  Submission,
-  SubmissionSchema,
-} from 'src/database/schemas/submission.schema';
-import { User, UserSchema } from 'src/database/schemas/user.schema';
-import { ExamsController } from 'src/modules/exams/exams.controller';
 import { ExamsService } from 'src/modules/exams/exams.service';
+import { Exam } from 'src/database/schemas/exam.schema';
+import { Question } from 'src/database/schemas/question.schema';
+import { Course } from 'src/database/schemas/course.schema';
+import { Submission } from 'src/database/schemas/submission.schema';
+import { User } from 'src/database/schemas/user.schema';
 import { NotificationsService } from 'src/modules/notifications/notifications.service';
 
-class FakeJwtAuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest();
-    req.user = {
-      id: String(req.headers['x-user-id'] ?? ''),
-      role: String(req.headers['x-user-role'] ?? 'student'),
-    };
-    return true;
-  }
-}
+jest.mock('src/common/utils/public-id.util', () => ({
+  generatePrefixedPublicId: jest.fn().mockResolvedValue('E123456'),
+}));
 
-describe('TestExamService - Teacher manages exams (Controller -> Service -> DB)', () => {
-  let app: INestApplication;
-  let connection: Connection;
-  let mongoServer: MongoMemoryReplSet;
+jest.mock('src/common/utils/exam.util', () => ({
+  computeExamStatus: jest.fn().mockReturnValue('scheduled'),
+}));
 
-  let userModel: Model<any>;
-  let courseModel: Model<any>;
-  let examModel: Model<any>;
-  let questionModel: Model<any>;
-  let submissionModel: Model<any>;
+describe('TestExamService - ExamsService business logic', () => {
+  let service: ExamsService;
+  let examModel: any;
+  let questionModel: any;
+  let courseModel: any;
+  let submissionModel: any;
+  let userModel: any;
+  let notificationServiceMock: any;
 
-  const notificationServiceMock = {
-    createNotification: jest.fn().mockResolvedValue(undefined),
-  };
+  const TEACHER_ID = '507f1f77bcf86cd799439011';
+  const TEACHER_B_ID = '607f1f77bcf86cd799439099';
+  const COURSE_ID = '507f1f77bcf86cd799439022';
+  const EXAM_ID = '507f1f77bcf86cd799439033';
+  const STUDENT_ID = '507f1f77bcf86cd799439044';
 
-  let userSeq = 0;
-  let courseSeq = 0;
-  let examSeq = 0;
+  const futureStart = new Date(Date.now() + 86400000).toISOString();
+  const futureEnd = new Date(Date.now() + 172800000).toISOString();
 
-  const nextCoursePublicId = () => `C${String(++courseSeq).padStart(6, '0')}`;
-  const nextExamPublicId = () => `E${String(++examSeq).padStart(6, '0')}`;
+  const mockTeacher = { id: TEACHER_ID, role: 'teacher' };
+  const mockStudent = { id: STUDENT_ID, role: 'student' };
 
-  async function createUser(
-    role: 'student' | 'teacher' | 'admin',
-    fullName: string,
-  ) {
-    userSeq += 1;
-    return userModel.create({
-      username: `${role}_${userSeq}`,
-      email: `${role}_${userSeq}@mail.com`,
-      passwordHash: 'hashed-password-for-test',
-      fullName,
-      role,
-    });
-  }
+  const createMockCourse = (overrides: any = {}) => ({
+    _id: new Types.ObjectId(COURSE_ID),
+    courseName: 'Test Course',
+    teacherId: new Types.ObjectId(TEACHER_ID),
+    ...overrides,
+  });
 
-  async function createCourse(
-    teacherId: Types.ObjectId,
-    courseName = 'Course for exam',
-  ) {
-    return courseModel.create({
-      publicId: nextCoursePublicId(),
-      courseName,
-      teacherId,
-    });
-  }
-
-  async function seedExam(params: {
-    courseId: Types.ObjectId;
-    title?: string;
-    status?: 'scheduled' | 'active' | 'completed';
-    startTime?: Date;
-    endTime?: Date;
-    rateScore?: number;
-    questionCount?: number;
-  }) {
-    const {
-      courseId,
-      title = `Exam ${examSeq + 1}`,
-      status = 'scheduled',
-      startTime = new Date(Date.now() + 60 * 60 * 1000),
-      endTime = new Date(Date.now() + 2 * 60 * 60 * 1000),
-      rateScore = 60,
-      questionCount = 1,
-    } = params;
-
-    const courseDoc = await courseModel.findById(courseId).select('teacherId').exec();
-    if (!courseDoc) {
-      throw new NotFoundException('Course not found in seedExam');
-    }
-    const teacherId = courseDoc.teacherId as Types.ObjectId;
-
-    const questionDocs = await questionModel.insertMany(
-      Array.from({ length: questionCount }).map((_, idx) => ({
-        content: `Question ${idx + 1}`,
+  const createValidExamDto = (overrides: any = {}) => ({
+    title: 'Midterm Exam',
+    durationMinutes: 60,
+    startTime: futureStart,
+    endTime: futureEnd,
+    courseId: COURSE_ID,
+    rateScore: 70,
+    questions: [
+      {
+        content: 'What is 1+1?',
         answerQuestion: 2,
         answer: [
-          { content: 'A', isCorrect: false },
-          { content: 'B', isCorrect: true },
-          { content: 'C', isCorrect: false },
-          { content: 'D', isCorrect: false },
+          { content: 'A. 1' },
+          { content: 'B. 2' },
+          { content: 'C. 3' },
+          { content: 'D. 4' },
         ],
-        courseId,
-        teacherId,
-      })),
-    );
+      },
+    ],
+    ...overrides,
+  });
 
-    return examModel.create({
-      publicId: nextExamPublicId(),
-      title,
-      durationMinutes: 60,
-      startTime,
-      endTime,
-      status,
-      courseId,
-      questions: questionDocs.map((q) => q._id),
-      rateScore,
-    });
-  }
+  const createMockExam = (overrides: any = {}) => ({
+    _id: new Types.ObjectId(EXAM_ID),
+    publicId: 'E123456',
+    title: 'Midterm Exam',
+    durationMinutes: 60,
+    startTime: new Date(futureStart),
+    endTime: new Date(futureEnd),
+    status: 'scheduled',
+    courseId: new Types.ObjectId(COURSE_ID),
+    questions: [new Types.ObjectId()],
+    rateScore: 70,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
 
-  function buildCreateExamPayload(
-    courseId: string,
-    overrides: Record<string, unknown> = {},
-  ) {
-    return {
-      title: 'Midterm Test',
-      durationMinutes: 60,
-      startTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      endTime: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-      status: 'scheduled',
-      courseId,
-      rateScore: 60,
-      questions: [
-        {
-          content: '2 + 2 = ?',
-          answerQuestion: 2,
-          answer: [
-            { content: '3' },
-            { content: '4' },
-            { content: '5' },
-            { content: '6' },
-          ],
-        },
-      ],
-      ...overrides,
-    };
-  }
+  // Mock session
+  const mockSession = {
+    startTransaction: jest.fn(),
+    commitTransaction: jest.fn().mockResolvedValue(undefined),
+    abortTransaction: jest.fn().mockResolvedValue(undefined),
+    endSession: jest.fn().mockResolvedValue(undefined),
+  };
 
   beforeAll(async () => {
-    mongoServer = await MongoMemoryReplSet.create({
-      replSet: { count: 1 },
-    });
+    const mockExamModel: any = jest.fn();
+    mockExamModel.findById = jest.fn();
+    mockExamModel.findOne = jest.fn();
+    mockExamModel.find = jest.fn();
+    mockExamModel.create = jest.fn();
+    mockExamModel.deleteOne = jest.fn();
+    mockExamModel.countDocuments = jest.fn();
+    mockExamModel.exists = jest.fn();
+    mockExamModel.findByIdAndUpdate = jest.fn();
+    mockExamModel.findOneAndUpdate = jest.fn();
+    mockExamModel.hydrate = jest.fn((obj) => obj);
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [
-        MongooseModule.forRoot(mongoServer.getUri()),
-        MongooseModule.forFeature([
-          { name: User.name, schema: UserSchema },
-          { name: Course.name, schema: CourseSchema },
-          { name: Exam.name, schema: ExamSchema },
-          { name: Question.name, schema: QuestionSchema },
-          { name: Submission.name, schema: SubmissionSchema },
-        ]),
-      ],
-      controllers: [ExamsController],
+    const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExamsService,
+        { provide: getModelToken(Exam.name), useValue: mockExamModel },
+        {
+          provide: getModelToken(Question.name),
+          useValue: {
+            insertMany: jest.fn().mockResolvedValue([
+              { _id: new Types.ObjectId(), content: 'Q1', answerQuestion: 2, answer: [
+                { content: 'A', isCorrect: false },
+                { content: 'B', isCorrect: true },
+                { content: 'C', isCorrect: false },
+                { content: 'D', isCorrect: false },
+              ]},
+            ]),
+            find: jest.fn(),
+            deleteMany: jest.fn().mockResolvedValue({ deletedCount: 1 }),
+          },
+        },
+        {
+          provide: getModelToken(Course.name),
+          useValue: { findById: jest.fn(), find: jest.fn() },
+        },
+        {
+          provide: getConnectionToken(),
+          useValue: { startSession: jest.fn().mockResolvedValue(mockSession) },
+        },
+        {
+          provide: getModelToken(Submission.name),
+          useValue: {
+            findOne: jest.fn(),
+            findById: jest.fn(),
+            find: jest.fn(),
+            create: jest.fn(),
+            deleteMany: jest.fn().mockResolvedValue({ deletedCount: 1 }),
+          },
+        },
+        {
+          provide: getModelToken(User.name),
+          useValue: { findById: jest.fn() },
+        },
         {
           provide: NotificationsService,
-          useValue: notificationServiceMock,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: FakeJwtAuthGuard,
-        },
-        {
-          provide: APP_GUARD,
-          useFactory: (reflector: Reflector) => new RolesGuard(reflector),
-          inject: [Reflector],
+          useValue: { createNotification: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidUnknownValues: false,
-      }),
+    service = module.get<ExamsService>(ExamsService);
+    examModel = module.get(getModelToken(Exam.name));
+    questionModel = module.get(getModelToken(Question.name));
+    courseModel = module.get(getModelToken(Course.name));
+    submissionModel = module.get(getModelToken(Submission.name));
+    userModel = module.get(getModelToken(User.name));
+    notificationServiceMock = module.get(NotificationsService);
+  });
+
+  beforeEach(() => jest.clearAllMocks());
+
+  // ==================== CREATE EXAM ====================
+
+  it('ME-001 — should_create_exam_successfully_with_valid_data', async () => {
+    // ME-001: Teacher tạo bài thi thành công.
+    // Mô tả: createExam với dữ liệu hợp lệ, course thuộc teacher.
+    // Expected: Trả ExamResponseDto, publicId dạng E + 6 số, questions lưu DB.
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    examModel.create.mockResolvedValue([createMockExam()]);
+
+    const result = await service.createExam(createValidExamDto(), mockTeacher as any);
+
+    expect(result.publicId).toMatch(/^E\d{6}$/);
+    expect(result.title).toBe('Midterm Exam');
+    expect(questionModel.insertMany).toHaveBeenCalled();
+    expect(mockSession.commitTransaction).toHaveBeenCalled();
+  });
+
+  it('ME-002 — should_throw_forbidden_when_teacher_context_missing', async () => {
+    // ME-002: Thiếu teacher context → 403.
+    // Mô tả: createExam với user.id = undefined.
+    // Expected: ForbiddenException('Missing teacher context').
+    await expect(
+      service.createExam(createValidExamDto(), {} as any),
+    ).rejects.toThrow('Missing teacher context');
+  });
+
+  it('ME-003 — should_throw_not_found_when_course_not_exist', async () => {
+    // ME-003: courseId không tồn tại → 404.
+    // Mô tả: createExam với courseId không tồn tại trong DB.
+    // Expected: NotFoundException('Course not found').
+    courseModel.findById.mockResolvedValue(null);
+
+    await expect(
+      service.createExam(createValidExamDto(), mockTeacher as any),
+    ).rejects.toThrow('Course not found');
+  });
+
+  it('ME-004 — should_throw_forbidden_when_course_belongs_to_other_teacher', async () => {
+    // ME-004: Course thuộc teacher khác → 403.
+    // Mô tả: Teacher A tạo exam cho course của Teacher B.
+    // Expected: ForbiddenException('You can only create exams for your courses').
+    courseModel.findById.mockResolvedValue(
+      createMockCourse({ teacherId: new Types.ObjectId(TEACHER_B_ID) }),
     );
 
-    await app.init();
-
-    connection = moduleFixture.get<Connection>(getConnectionToken());
-    userModel = moduleFixture.get<Model<any>>(getModelToken(User.name));
-    courseModel = moduleFixture.get<Model<any>>(getModelToken(Course.name));
-    examModel = moduleFixture.get<Model<any>>(getModelToken(Exam.name));
-    questionModel = moduleFixture.get<Model<any>>(getModelToken(Question.name));
-    submissionModel = moduleFixture.get<Model<any>>(getModelToken(Submission.name));
-
-    await Promise.all([
-      userModel.createCollection(),
-      courseModel.createCollection(),
-      questionModel.createCollection(),
-      examModel.createCollection(),
-      submissionModel.createCollection(),
-    ]);
+    await expect(
+      service.createExam(createValidExamDto(), mockTeacher as any),
+    ).rejects.toThrow('You can only create exams for your courses');
   });
 
-  beforeEach(async () => {
-    await Promise.all([
-      submissionModel.deleteMany({}),
-      examModel.deleteMany({}),
-      questionModel.deleteMany({}),
-      courseModel.deleteMany({}),
-      userModel.deleteMany({}),
-    ]);
-    notificationServiceMock.createNotification.mockClear();
+  it('ME-005 — should_throw_bad_request_when_endTime_before_startTime', async () => {
+    // ME-005: endTime trước startTime → 400.
+    // Mô tả: Validate ensureValidDates.
+    // Expected: BadRequestException('endTime must be after startTime').
+    courseModel.findById.mockResolvedValue(createMockCourse());
+
+    await expect(
+      service.createExam(
+        createValidExamDto({ startTime: futureEnd, endTime: futureStart }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow('endTime must be after startTime');
   });
 
-  afterAll(async () => {
-    await connection.close();
-    await app.close();
-    await mongoServer.stop();
+  it('ME-006 — should_throw_bad_request_when_duration_exceeds_window', async () => {
+    // ME-006: durationMinutes > thời gian window → 400.
+    // Mô tả: Exam 60 phút nhưng window chỉ 30 phút.
+    // Expected: BadRequestException.
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    const shortEnd = new Date(Date.now() + 86400000 + 1800000).toISOString(); // +30min
+
+    await expect(
+      service.createExam(
+        createValidExamDto({ endTime: shortEnd, durationMinutes: 60 }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow('durationMinutes cannot exceed the available time window');
   });
 
-  describe('create exam() - 13 test case', () => {
-    it('should_create_exam_successfully_for_owner_teacher', async () => {
-      // TC_EXAM_001: Giáo viên tạo bài thi cho khóa học của chính mình thành công.
-      // Mô tả: Kiểm tra luồng create exam qua controller -> service -> DB.
-      // Expected: HTTP 201, lưu exam và question vào DB.
-      const teacher = await createUser('teacher', 'Teacher A');
-      const course = await createCourse(teacher._id, 'NodeJS');
+  it('ME-007 — should_throw_bad_request_when_duration_is_zero_or_negative', async () => {
+    // ME-007: durationMinutes = 0 → 400.
+    // Mô tả: Validate ensureDurationWithinWindow.
+    // Expected: BadRequestException('durationMinutes must be greater than 0').
+    courseModel.findById.mockResolvedValue(createMockCourse());
 
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(buildCreateExamPayload(String(course._id)));
-
-      expect(response.status).toBe(201);
-      expect(response.body?.success).toBe(true);
-      expect(response.body?.data?.exam?.title).toBe('Midterm Test');
-
-      const examInDb = await examModel.findOne({ courseId: course._id }).lean();
-      const questionCount = await questionModel.countDocuments({ courseId: course._id });
-      expect(examInDb).toBeTruthy();
-      expect(questionCount).toBe(1);
-    });
-
-    it('should_default_status_to_scheduled_when_status_missing', async () => {
-      // TC_EXAM_002: Thiếu status thì hệ thống gán mặc định scheduled.
-      // Mô tả: Kiểm tra logic default status ở service create.
-      // Expected: HTTP 201 và exam.status là scheduled.
-      const teacher = await createUser('teacher', 'Teacher B');
-      const course = await createCourse(teacher._id, 'NestJS');
-
-      const payload = buildCreateExamPayload(String(course._id));
-      delete (payload as any).status;
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(payload);
-
-      expect(response.status).toBe(201);
-      expect(response.body?.data?.exam?.status).toBe('scheduled');
-    });
-
-    it('should_return_bad_request_for_invalid_course_id_format', async () => {
-      // TC_EXAM_003: courseId sai định dạng ObjectId phải bị từ chối.
-      // Mô tả: Kiểm tra validation courseId tại API create.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher C');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(buildCreateExamPayload('not-object-id'));
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_not_found_for_non_existing_course', async () => {
-      // TC_EXAM_004: Tạo exam cho course không tồn tại phải bị từ chối.
-      // Mô tả: Kiểm tra nhánh NotFound của create exam.
-      // Expected: HTTP 404 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher D');
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(buildCreateExamPayload('507f1f77bcf86cd799439011'));
-
-      expect(response.status).toBe(404);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_forbidden_when_teacher_creates_exam_for_other_teacher_course', async () => {
-      // TC_EXAM_005: Giáo viên không được tạo exam cho course của giáo viên khác.
-      // Mô tả: Kiểm tra rule ownership ở create exam.
-      // Expected: HTTP 403 và DB không có exam mới.
-      const teacherA = await createUser('teacher', 'Teacher A');
-      const teacherB = await createUser('teacher', 'Teacher B');
-      const courseOfB = await createCourse(teacherB._id, 'Course B');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacherA._id))
-        .set('x-user-role', 'teacher')
-        .send(buildCreateExamPayload(String(courseOfB._id)));
-
-      expect(response.status).toBe(403);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_forbidden_when_teacher_context_missing_id', async () => {
-      // TC_EXAM_006: Thiếu teacher context phải bị từ chối.
-      // Mô tả: Kiểm tra req.user.id bắt buộc trong create exam.
-      // Expected: HTTP 403 và không có dữ liệu mới.
-      const teacher = await createUser('teacher', 'Teacher E');
-      const course = await createCourse(teacher._id, 'Missing Context');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-role', 'teacher')
-        .send(buildCreateExamPayload(String(course._id)));
-
-      expect(response.status).toBe(403);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_forbidden_when_teacher_id_is_invalid_format', async () => {
-      // TC_EXAM_007: teacher id sai định dạng phải bị từ chối.
-      // Mô tả: Kiểm tra validation teacher.id trong service create.
-      // Expected: HTTP 403 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher F');
-      const course = await createCourse(teacher._id, 'Bad Teacher Id');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', 'teacher-invalid-id')
-        .set('x-user-role', 'teacher')
-        .send(buildCreateExamPayload(String(course._id)));
-
-      expect(response.status).toBe(403);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_bad_request_when_end_time_before_start_time', async () => {
-      // TC_EXAM_008: endTime nhỏ hơn startTime phải bị từ chối.
-      // Mô tả: Kiểm tra validate mốc thời gian exam.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher G');
-      const course = await createCourse(teacher._id, 'Date Validation');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(
-          buildCreateExamPayload(String(course._id), {
-            startTime: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-            endTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          }),
-        );
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_bad_request_when_duration_exceeds_time_window', async () => {
-      // TC_EXAM_009: durationMinutes vượt quá khung giờ phải bị từ chối.
-      // Mô tả: Kiểm tra duration không lớn hơn end-start.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher H');
-      const course = await createCourse(teacher._id, 'Duration Validation');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(
-          buildCreateExamPayload(String(course._id), {
-            durationMinutes: 200,
-            startTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-            endTime: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-          }),
-        );
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_bad_request_when_questions_payload_invalid', async () => {
-      // TC_EXAM_010: Danh sách questions rỗng phải bị từ chối.
-      // Mô tả: Kiểm tra validation ArrayMinSize của questions.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher I');
-      const course = await createCourse(teacher._id, 'Question Validation');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(
-          buildCreateExamPayload(String(course._id), {
-            questions: [],
-          }),
-        );
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_bad_request_when_rate_score_is_greater_than_100', async () => {
-      // TC_EXAM_031: rateScore lớn hơn 100 phải bị từ chối.
-      // Mô tả: Kiểm tra validation Max(100) của rateScore.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher Rate Score Max');
-      const course = await createCourse(teacher._id, 'Rate Score Max Course');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(
-          buildCreateExamPayload(String(course._id), {
-            rateScore: 101,
-          }),
-        );
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_bad_request_when_duration_minutes_is_not_positive', async () => {
-      // TC_EXAM_032: durationMinutes không dương phải bị từ chối.
-      // Mô tả: Kiểm tra validation IsPositive của durationMinutes.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher Duration');
-      const course = await createCourse(teacher._id, 'Duration Course');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(
-          buildCreateExamPayload(String(course._id), {
-            durationMinutes: 0,
-          }),
-        );
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
-
-    it('should_return_bad_request_when_answer_question_is_out_of_range', async () => {
-      // TC_EXAM_033: answerQuestion vượt phạm vi 1..4 phải bị từ chối.
-      // Mô tả: Kiểm tra validation Max(4) của answerQuestion.
-      // Expected: HTTP 400 và không lưu exam.
-      const teacher = await createUser('teacher', 'Teacher Answer Range');
-      const course = await createCourse(teacher._id, 'Answer Range Course');
-
-      const response = await request(app.getHttpServer())
-        .post('/exams')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(
-          buildCreateExamPayload(String(course._id), {
-            questions: [
-              {
-                content: 'Question invalid answerQuestion',
-                answerQuestion: 5,
-                answer: [
-                  { content: 'A' },
-                  { content: 'B' },
-                  { content: 'C' },
-                  { content: 'D' },
-                ],
-              },
-            ],
-          }),
-        );
-
-      expect(response.status).toBe(400);
-      expect(await examModel.countDocuments({})).toBe(0);
-    });
+    await expect(
+      service.createExam(
+        createValidExamDto({ durationMinutes: 0 }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow('durationMinutes must be greater than 0');
   });
 
-  describe('list exams() - 13 test case', () => {
-    it('should_list_only_exams_belonging_to_teacher_courses', async () => {
-      // TC_EXAM_011: Danh sách exam chỉ gồm course thuộc teacher hiện tại.
-      // Mô tả: Kiểm tra lọc theo ownership teacherId.
-      // Expected: HTTP 200 và chỉ có exam của teacher A.
-      const teacherA = await createUser('teacher', 'Teacher List A');
-      const teacherB = await createUser('teacher', 'Teacher List B');
-      const courseA = await createCourse(teacherA._id, 'Course A');
-      const courseB = await createCourse(teacherB._id, 'Course B');
+  it('ME-008 — should_rollback_transaction_on_error', async () => {
+    // ME-008: Lỗi trong transaction → rollback.
+    // Mô tả: examModel.create throw error, session phải abortTransaction.
+    // Expected: abortTransaction được gọi.
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    examModel.create.mockRejectedValue(new Error('DB write error'));
 
-      await seedExam({ courseId: courseA._id, title: 'A-Exam-1' });
-      await seedExam({ courseId: courseA._id, title: 'A-Exam-2' });
-      await seedExam({ courseId: courseB._id, title: 'B-Exam-1' });
+    await expect(
+      service.createExam(createValidExamDto(), mockTeacher as any),
+    ).rejects.toThrow('DB write error');
 
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacherA._id)}`)
-        .set('x-user-id', String(teacherA._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(2);
-      expect(
-        response.body?.data?.exams.every(
-          (exam: any) => exam.courseName === 'Course A',
-        ),
-      ).toBe(true);
-    });
-
-    it('should_return_bad_request_for_invalid_teacher_id', async () => {
-      // TC_EXAM_012: teacherId sai định dạng phải bị từ chối.
-      // Mô tả: Kiểm tra validation teacherId khi list exams.
-      // Expected: HTTP 400.
-      const response = await request(app.getHttpServer())
-        .get('/exams/teacher/not-valid-id')
-        .set('x-user-id', 'not-valid-id')
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(400);
-    });
-
-    it('should_return_empty_when_teacher_has_no_courses', async () => {
-      // TC_EXAM_013: Teacher chưa có course thì danh sách exam rỗng.
-      // Mô tả: Kiểm tra nhánh empty result của list exams.
-      // Expected: HTTP 200 và pagination.total = 0.
-      const teacher = await createUser('teacher', 'Teacher No Course');
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(0);
-      expect(response.body?.data?.pagination?.total).toBe(0);
-    });
-
-    it('should_filter_by_specific_course_id', async () => {
-      // TC_EXAM_014: Lọc theo courseId cụ thể trả đúng tập exam.
-      // Mô tả: Kiểm tra filter courseId khi list exams.
-      // Expected: HTTP 200 và chỉ còn exam của course đã chọn.
-      const teacher = await createUser('teacher', 'Teacher Course Filter');
-      const course1 = await createCourse(teacher._id, 'Course One');
-      const course2 = await createCourse(teacher._id, 'Course Two');
-
-      await seedExam({ courseId: course1._id, title: 'Exam One' });
-      await seedExam({ courseId: course2._id, title: 'Exam Two' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ courseId: String(course1._id) })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(1);
-      expect(response.body?.data?.exams?.[0]?.courseName).toBe('Course One');
-    });
-
-    it('should_return_all_courses_when_course_id_is_all', async () => {
-      // TC_EXAM_015: Khi courseId=all thì trả về exam của mọi course của teacher.
-      // Mô tả: Kiểm tra nhánh bỏ lọc course cụ thể.
-      // Expected: HTTP 200 và lấy đủ exam của teacher.
-      const teacher = await createUser('teacher', 'Teacher Course All');
-      const course1 = await createCourse(teacher._id, 'Course 1');
-      const course2 = await createCourse(teacher._id, 'Course 2');
-
-      await seedExam({ courseId: course1._id, title: 'Exam 1' });
-      await seedExam({ courseId: course2._id, title: 'Exam 2' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ courseId: 'all' })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(2);
-    });
-
-    it('should_return_bad_request_for_invalid_course_id_filter', async () => {
-      // TC_EXAM_016: courseId filter sai định dạng phải bị từ chối.
-      // Mô tả: Kiểm tra validation courseId trong query list.
-      // Expected: HTTP 400.
-      const teacher = await createUser('teacher', 'Teacher Invalid Course Filter');
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ courseId: 'invalid-course-id' })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(400);
-    });
-
-    it('should_return_empty_when_filter_course_not_owned_by_teacher', async () => {
-      // TC_EXAM_017: Lọc course không thuộc teacher thì kết quả phải rỗng.
-      // Mô tả: Kiểm tra bảo mật ownership khi query theo courseId.
-      // Expected: HTTP 200 và total = 0.
-      const teacherA = await createUser('teacher', 'Teacher A');
-      const teacherB = await createUser('teacher', 'Teacher B');
-      const courseOfB = await createCourse(teacherB._id, 'Foreign Course');
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacherA._id)}`)
-        .query({ courseId: String(courseOfB._id) })
-        .set('x-user-id', String(teacherA._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(0);
-      expect(response.body?.data?.pagination?.total).toBe(0);
-    });
-
-    it('should_support_search_status_and_pagination_together', async () => {
-      // TC_EXAM_018: Search + status + pagination hoạt động đồng thời.
-      // Mô tả: Kiểm tra kết hợp nhiều điều kiện query list exams.
-      // Expected: HTTP 200, có phân trang và tổng kết quả đúng.
-      const teacher = await createUser('teacher', 'Teacher Search');
-      const course = await createCourse(teacher._id, 'Search Course');
-
-      await seedExam({
-        courseId: course._id,
-        title: 'Algebra Midterm',
-        status: 'scheduled',
-      });
-      await seedExam({
-        courseId: course._id,
-        title: 'Geometry Midterm',
-        status: 'scheduled',
-      });
-      await seedExam({
-        courseId: course._id,
-        title: 'History Final',
-        status: 'completed',
-      });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ search: 'Midterm', status: 'scheduled', page: 1, limit: 1 })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(1);
-      expect(response.body?.data?.pagination?.total).toBe(2);
-      expect(response.body?.data?.pagination?.totalPages).toBe(2);
-    });
-
-    it('should_filter_exams_by_completed_status_only', async () => {
-      // TC_EXAM_034: Filter status=completed chỉ trả exam đã completed.
-      // Mô tả: Kiểm tra lọc theo trạng thái khi list exams.
-      // Expected: HTTP 200 và mọi exam trả về đều completed.
-      const teacher = await createUser('teacher', 'Teacher Status Filter');
-      const course = await createCourse(teacher._id, 'Status Filter Course');
-
-      await seedExam({ courseId: course._id, title: 'Exam Completed', status: 'completed' });
-      await seedExam({ courseId: course._id, title: 'Exam Scheduled', status: 'scheduled' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ status: 'completed' })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(1);
-      expect(response.body?.data?.exams?.[0]?.title).toBe('Exam Completed');
-    });
-
-    it('should_search_exams_by_public_id_keyword', async () => {
-      // TC_EXAM_035: Search theo publicId phải trả đúng exam khớp.
-      // Mô tả: Kiểm tra điều kiện search trên trường publicId.
-      // Expected: HTTP 200 và có đúng 1 exam được match.
-      const teacher = await createUser('teacher', 'Teacher Search PublicId');
-      const course = await createCourse(teacher._id, 'Search PublicId Course');
-
-      const exam1 = await seedExam({ courseId: course._id, title: 'Exam one' });
-      await seedExam({ courseId: course._id, title: 'Exam two' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ search: exam1.publicId })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(1);
-      expect(response.body?.data?.exams?.[0]?.publicId).toBe(exam1.publicId);
-    });
-
-    it('should_return_empty_when_search_keyword_has_no_match', async () => {
-      // TC_EXAM_036: Search không match phải trả danh sách rỗng.
-      // Mô tả: Kiểm tra nhánh empty result của search exams.
-      // Expected: HTTP 200 và exams.length = 0.
-      const teacher = await createUser('teacher', 'Teacher Empty Search');
-      const course = await createCourse(teacher._id, 'Empty Search Course');
-
-      await seedExam({ courseId: course._id, title: 'Math Exam' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ search: 'NoMatchKeywordXYZ' })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exams).toHaveLength(0);
-    });
-
-    it('should_return_bad_request_when_search_keyword_is_single_backslash', async () => {
-      // TC_EXAM_041: Search ký tự backslash đơn phải bị từ chối an toàn.
-      // Mô tả: Kiểm tra xử lý input regex nguy hiểm ở filter search.
-      // Expected: HTTP 400 (không được throw 500 từ Mongo regex).
-      const teacher = await createUser('teacher', 'Teacher Regex Slash');
-      const course = await createCourse(teacher._id, 'Regex Slash Course');
-      await seedExam({ courseId: course._id, title: 'Regex Exam' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ search: '\\' })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(400);
-    });
-
-    it('should_return_bad_request_when_search_keyword_has_invalid_regex_pattern', async () => {
-      // TC_EXAM_042: Search pattern regex không hợp lệ phải bị từ chối an toàn.
-      // Mô tả: Kiểm tra input '[' không gây lỗi runtime DB.
-      // Expected: HTTP 400 (không được 500 internal error).
-      const teacher = await createUser('teacher', 'Teacher Regex Bracket');
-      const course = await createCourse(teacher._id, 'Regex Bracket Course');
-      await seedExam({ courseId: course._id, title: 'Regex Bracket Exam' });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/teacher/${String(teacher._id)}`)
-        .query({ search: '[' })
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(400);
-    });
+    expect(mockSession.abortTransaction).toHaveBeenCalled();
+    expect(mockSession.endSession).toHaveBeenCalled();
   });
 
-  describe('manage exam() - 17 test case', () => {
-    it('should_get_exam_detail_by_id_for_owner_teacher', async () => {
-      // TC_EXAM_019: Chủ sở hữu exam xem chi tiết theo id thành công.
-      // Mô tả: Kiểm tra endpoint get exam detail theo ObjectId.
-      // Expected: HTTP 200 và trả đầy đủ danh sách câu hỏi.
-      const teacher = await createUser('teacher', 'Teacher Get');
-      const course = await createCourse(teacher._id, 'Get Course');
-      const exam = await seedExam({ courseId: course._id, questionCount: 2 });
+  it('ME-009 — should_reject_title_over_200_chars', async () => {
+    // ME-009: Title > 200 ký tự → phải bị reject.
+    // Mô tả: Theo nghiệp vụ title phải có giới hạn độ dài hợp lý.
+    // Expected: Throw BadRequestException vì title quá dài.
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    examModel.create.mockResolvedValue([createMockExam({ title: 'A'.repeat(300) })]);
 
-      const response = await request(app.getHttpServer())
-        .get(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
+    await expect(
+      service.createExam(
+        createValidExamDto({ title: 'A'.repeat(300) }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow();
+  });
 
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exam?.id).toBe(String(exam._id));
-      expect(response.body?.data?.exam?.questions).toHaveLength(2);
+  // ==================== FIND EXAM BY ID ====================
+
+  it('ME-010 — should_find_exam_by_id_successfully', async () => {
+    // ME-010: Teacher xem chi tiết bài thi của mình.
+    // Mô tả: findExamById với examId hợp lệ, course thuộc teacher.
+    // Expected: Trả ExamResponseDto đầy đủ.
+    const mockExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    questionModel.find.mockReturnValue({ exec: jest.fn().mockResolvedValue([]) });
+
+    const result = await service.findExamById(EXAM_ID, mockTeacher as any);
+
+    expect(result.id).toBe(EXAM_ID);
+    expect(result.title).toBe('Midterm Exam');
+  });
+
+  it('ME-011 — should_throw_not_found_when_exam_not_exist', async () => {
+    // ME-011: Exam không tồn tại → 404.
+    // Mô tả: findExamById với examId không tồn tại.
+    // Expected: NotFoundException('Exam not found').
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+
+    await expect(
+      service.findExamById('nonexistent', mockTeacher as any),
+    ).rejects.toThrow('Exam not found');
+  });
+
+  it('ME-012 — should_throw_forbidden_when_viewing_other_teachers_exam', async () => {
+    // ME-012: Teacher xem exam của teacher khác → 403.
+    // Mô tả: Course thuộc Teacher B nhưng Teacher A truy cập.
+    // Expected: ForbiddenException.
+    const mockExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(
+      createMockCourse({ teacherId: new Types.ObjectId(TEACHER_B_ID) }),
+    );
+
+    await expect(
+      service.findExamById(EXAM_ID, mockTeacher as any),
+    ).rejects.toThrow('You can only view exams for your courses');
+  });
+
+  // ==================== DELETE EXAM ====================
+
+  it('ME-013 — should_delete_exam_and_cascade_questions_submissions', async () => {
+    // ME-013: Xóa exam → xóa questions + submissions.
+    // Mô tả: deleteExam cascade đúng cả questions và submissions.
+    // Expected: questionModel.deleteMany + submissionModel.deleteMany + examModel.deleteOne.
+    const mockExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    examModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+    await service.deleteExam(EXAM_ID, mockTeacher as any);
+
+    expect(questionModel.deleteMany).toHaveBeenCalled();
+    expect(submissionModel.deleteMany).toHaveBeenCalled();
+    expect(examModel.deleteOne).toHaveBeenCalled();
+  });
+
+  it('ME-014 — should_throw_not_found_when_deleting_nonexistent_exam', async () => {
+    // ME-014: Xóa exam không tồn tại → 404.
+    // Mô tả: deleteExam với examId không tồn tại.
+    // Expected: NotFoundException('Exam not found').
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+
+    await expect(
+      service.deleteExam('nonexistent', mockTeacher as any),
+    ).rejects.toThrow('Exam not found');
+  });
+
+  it('ME-015 — should_throw_forbidden_when_deleting_other_teachers_exam', async () => {
+    // ME-015: Teacher xóa exam của teacher khác → 403.
+    // Mô tả: Course thuộc Teacher B, Teacher A cố xóa.
+    // Expected: ForbiddenException('You can only delete exams you own').
+    const mockExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(
+      createMockCourse({ teacherId: new Types.ObjectId(TEACHER_B_ID) }),
+    );
+
+    await expect(
+      service.deleteExam(EXAM_ID, mockTeacher as any),
+    ).rejects.toThrow('You can only delete exams you own');
+  });
+
+  // ==================== JOIN EXAM (STUDENT) ====================
+
+  it('ME-016 — should_throw_not_found_when_joining_invalid_code', async () => {
+    // ME-016: Student join exam với mã không tồn tại → 404.
+    // Mô tả: joinExam với publicId không tồn tại.
+    // Expected: NotFoundException.
+    examModel.findOne.mockReturnValue({ populate: jest.fn().mockResolvedValue(null) });
+
+    await expect(
+      service.joinExam({ publicId: 'INVALID' }, mockStudent as any),
+    ).rejects.toThrow('Exam with this code not found.');
+  });
+
+  it('ME-017 — should_throw_bad_request_when_exam_not_active', async () => {
+    // ME-017: Student join exam đã scheduled → 400.
+    // Mô tả: Exam status = scheduled, chưa active.
+    // Expected: BadRequestException('This exam is not active.').
+    const mockExam = createMockExam({ status: 'scheduled' });
+    examModel.findOne.mockReturnValue({ populate: jest.fn().mockResolvedValue(mockExam) });
+
+    await expect(
+      service.joinExam({ publicId: 'E123456' }, mockStudent as any),
+    ).rejects.toThrow('This exam is not active.');
+  });
+
+  it('ME-018 — should_throw_forbidden_when_already_submitted', async () => {
+    // ME-018: Student đã nộp bài rồi → 403.
+    // Mô tả: existingSubmission tồn tại.
+    // Expected: ForbiddenException('You have already submitted this exam.').
+    const mockExam = createMockExam({
+      status: 'active',
+      endTime: new Date(Date.now() + 86400000),
+    });
+    examModel.findOne.mockReturnValue({ populate: jest.fn().mockResolvedValue(mockExam) });
+    submissionModel.findOne.mockResolvedValue({ _id: 'existing-submission' });
+
+    await expect(
+      service.joinExam({ publicId: 'E123456' }, mockStudent as any),
+    ).rejects.toThrow('You have already submitted this exam.');
+  });
+
+  it('ME-019 — should_allow_any_student_to_join_without_enrollment_check', async () => {
+    // ME-019: Student chưa enroll vào course vẫn join được exam.
+    // Mô tả: Enrollment check bị comment out trong code (L807-817).
+    // Expected: Nên throw ForbiddenException nhưng hiện tại PASS → BUG.
+    const mockExam = {
+      ...createMockExam({ status: 'active', endTime: new Date(Date.now() + 86400000) }),
+      courseId: createMockCourse(),
+    };
+    examModel.findOne.mockReturnValue({ populate: jest.fn().mockResolvedValue(mockExam) });
+    submissionModel.findOne.mockResolvedValue(null);
+
+    // BUG: student chưa enroll vẫn join được vì enrollment check bị comment out
+    await expect(
+      service.joinExam({ publicId: 'E123456' }, mockStudent as any),
+    ).rejects.toThrow();
+  });
+
+  // ==================== LIST EXAMS ====================
+
+  it('ME-020 — should_list_exams_with_pagination', async () => {
+    // ME-020: Lấy danh sách bài thi có pagination.
+    // Mô tả: listExamSummaries trả đúng pagination metadata.
+    // Expected: Trả exams + pagination object.
+    const mockCourses = [createMockCourse()];
+    courseModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(mockCourses) }),
+    });
+    examModel.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(25) });
+    examModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([createMockExam()]),
+          }),
+        }),
+      }),
     });
 
-    it('should_get_exam_detail_by_public_id_for_owner_teacher', async () => {
-      // TC_EXAM_020: Chủ sở hữu exam xem chi tiết theo publicId thành công.
-      // Mô tả: Kiểm tra lookup exam bằng publicId.
-      // Expected: HTTP 200 và publicId trả về đúng.
-      const teacher = await createUser('teacher', 'Teacher Get PublicId');
-      const course = await createCourse(teacher._id, 'Get Public Course');
-      const exam = await seedExam({ courseId: course._id, questionCount: 1 });
+    const result = await service.listExamSummaries(TEACHER_ID, {
+      page: 1,
+      limit: 10,
+    } as any);
 
-      const response = await request(app.getHttpServer())
-        .get(`/exams/${exam.publicId}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
+    expect(result.pagination.total).toBe(25);
+    expect(result.pagination.totalPages).toBe(3);
+    expect(result.pagination.hasNextPage).toBe(true);
+  });
 
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exam?.publicId).toBe(exam.publicId);
+  it('ME-021 — should_throw_bad_request_when_teacher_id_invalid', async () => {
+    // ME-021: teacherId sai format → 400.
+    // Mô tả: listExamSummaries với teacherId không hợp lệ.
+    // Expected: BadRequestException('Invalid teacher ID').
+    await expect(
+      service.listExamSummaries('invalid-id'),
+    ).rejects.toThrow('Invalid teacher ID');
+  });
+
+  it('ME-022 — should_reject_backslash_search_with_bad_request', async () => {
+    // ME-022: Tìm exam bằng '\' → phải trả BadRequestException (400).
+    // Mô tả: Input chứa ký tự regex đặc biệt cần được escape hoặc reject.
+    // Expected: BadRequestException.
+    courseModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([createMockCourse()]),
+      }),
+    });
+    examModel.countDocuments.mockReturnValue({
+      exec: jest.fn().mockRejectedValue(new Error('Invalid regular expression')),
     });
 
-    it('should_return_not_found_when_getting_non_existing_exam', async () => {
-      // TC_EXAM_021: Lấy exam không tồn tại phải trả NotFound.
-      // Mô tả: Kiểm tra nhánh lỗi exam không có trong DB.
-      // Expected: HTTP 404.
-      const teacher = await createUser('teacher', 'Teacher Not Found');
+    await expect(
+      service.listExamSummaries(TEACHER_ID, { search: '\\' } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
 
-      const response = await request(app.getHttpServer())
-        .get('/exams/507f1f77bcf86cd799439013')
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(404);
+  it('ME-023 — should_return_empty_when_teacher_has_no_courses', async () => {
+    // ME-023: Teacher chưa có khóa học → trả rỗng.
+    // Mô tả: Teacher không có course nào → trả exams = [].
+    // Expected: Trả { exams: [], pagination: { total: 0 } }.
+    courseModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
     });
 
-    it('should_return_forbidden_when_getting_exam_of_other_teacher', async () => {
-      // TC_EXAM_022: Teacher không được xem exam của teacher khác.
-      // Mô tả: Kiểm tra ownership khi get exam detail.
-      // Expected: HTTP 403.
-      const owner = await createUser('teacher', 'Owner');
-      const anotherTeacher = await createUser('teacher', 'Another');
-      const course = await createCourse(owner._id, 'Owner Course');
-      const exam = await seedExam({ courseId: course._id });
+    const result = await service.listExamSummaries(TEACHER_ID, {} as any);
 
-      const response = await request(app.getHttpServer())
-        .get(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(anotherTeacher._id))
-        .set('x-user-role', 'teacher');
+    expect(result.exams).toEqual([]);
+    expect(result.pagination.total).toBe(0);
+  });
 
-      expect(response.status).toBe(403);
+  // ==================== ADDITIONAL RISK TESTS ====================
+
+  it('ME-024 — should_throw_bad_request_when_invalid_date_strings', async () => {
+    // ME-024: startTime/endTime không phải date → 400.
+    // Mô tả: ensureValidDates với invalid date.
+    // Expected: BadRequestException('Invalid start or end time').
+    courseModel.findById.mockResolvedValue(createMockCourse());
+
+    await expect(
+      service.createExam(
+        createValidExamDto({ startTime: 'not-a-date', endTime: 'also-not' }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow('Invalid start or end time');
+  });
+
+  it('ME-025 — should_throw_bad_request_when_courseId_invalid_format', async () => {
+    // ME-025: courseId sai format → 400.
+    // Mô tả: createExam với courseId không phải MongoId.
+    // Expected: BadRequestException('Invalid courseId').
+    await expect(
+      service.createExam(
+        createValidExamDto({ courseId: 'invalid' }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow('Invalid courseId');
+  });
+
+  // ==================== UPDATE EXAM ====================
+
+  it('ME-026 — should_update_exam_successfully', async () => {
+    // ME-026: Teacher cập nhật bài thi thành công.
+    // Mô tả: updateExam với dữ liệu hợp lệ, ownership đúng.
+    // Expected: Trả ExamResponseDto mới, questions mới.
+    const existingExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(existingExam) });
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    questionModel.deleteMany.mockResolvedValue({ deletedCount: 1 });
+    const updatedExam = createMockExam({ title: 'Updated Exam' });
+    examModel.findByIdAndUpdate.mockResolvedValue(updatedExam);
+
+    const result = await service.updateExam(
+      EXAM_ID,
+      createValidExamDto({ title: 'Updated Exam' }) as any,
+      mockTeacher as any,
+    );
+
+    expect(result.title).toBe('Updated Exam');
+    expect(mockSession.commitTransaction).toHaveBeenCalled();
+  });
+
+  it('ME-027 — should_throw_not_found_when_updating_nonexistent_exam', async () => {
+    // ME-027: Cập nhật exam không tồn tại → 404.
+    // Mô tả: updateExam với examId không tồn tại.
+    // Expected: NotFoundException('Exam not found').
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+
+    await expect(
+      service.updateExam(EXAM_ID, createValidExamDto() as any, mockTeacher as any),
+    ).rejects.toThrow('Exam not found');
+  });
+
+  it('ME-028 — should_throw_forbidden_when_updating_other_teachers_exam', async () => {
+    // ME-028: Teacher A cập nhật exam course Teacher B → 403.
+    // Mô tả: Ownership check trong updateExam.
+    // Expected: ForbiddenException.
+    const existingExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(existingExam) });
+    courseModel.findById.mockResolvedValue(
+      createMockCourse({ teacherId: new Types.ObjectId(TEACHER_B_ID) }),
+    );
+
+    await expect(
+      service.updateExam(EXAM_ID, createValidExamDto() as any, mockTeacher as any),
+    ).rejects.toThrow('You can only update exams for your courses');
+  });
+
+  it('ME-029 — should_throw_forbidden_when_update_missing_teacher_context', async () => {
+    // ME-029: updateExam thiếu teacher context → 403.
+    // Mô tả: user.id undefined.
+    // Expected: ForbiddenException('Missing teacher context').
+    await expect(
+      service.updateExam(EXAM_ID, createValidExamDto() as any, {} as any),
+    ).rejects.toThrow('Missing teacher context');
+  });
+
+  it('ME-030 — should_rollback_on_update_transaction_error', async () => {
+    // ME-030: Lỗi DB khi update → rollback transaction.
+    // Mô tả: questionModel.deleteMany throw error.
+    // Expected: session.abortTransaction được gọi.
+    const existingExam = createMockExam();
+    examModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(existingExam) });
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    questionModel.deleteMany.mockRejectedValue(new Error('Delete failed'));
+
+    await expect(
+      service.updateExam(EXAM_ID, createValidExamDto() as any, mockTeacher as any),
+    ).rejects.toThrow('Delete failed');
+
+    expect(mockSession.abortTransaction).toHaveBeenCalled();
+  });
+
+  // ==================== TRANSITION EXAM STATUS ====================
+
+  it('ME-031 — should_throw_not_found_when_transitioning_nonexistent_exam', async () => {
+    // ME-031: Transition exam không tồn tại → 404.
+    // Mô tả: transitionExamStatus với exam null.
+    // Expected: NotFoundException('Exam not found').
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(null),
+        }),
+      }),
     });
 
-    it('should_update_exam_successfully_and_replace_questions', async () => {
-      // TC_EXAM_023: Cập nhật exam thành công và thay thế toàn bộ questions cũ.
-      // Mô tả: Kiểm tra update exam + replace question documents.
-      // Expected: HTTP 200, title mới đúng và question cũ bị xóa.
-      const teacher = await createUser('teacher', 'Teacher Update');
-      const course = await createCourse(teacher._id, 'Update Course');
-      const exam = await seedExam({ courseId: course._id, questionCount: 2 });
+    await expect(
+      service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any),
+    ).rejects.toThrow('Exam not found');
+  });
 
-      const previousQuestionIds = [...exam.questions].map((q: any) => String(q));
+  it('ME-032 — should_throw_forbidden_when_teacher_transitions_other_teachers_exam', async () => {
+    // ME-032: Teacher transition exam của teacher khác → 403.
+    // Mô tả: Ownership check trong transitionExamStatus.
+    // Expected: ForbiddenException.
+    const mockExam = {
+      ...createMockExam({ status: 'scheduled' }),
+      courseId: createMockCourse({ teacherId: new Types.ObjectId(TEACHER_B_ID) }),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
+    });
 
-      const payload = buildCreateExamPayload(String(course._id), {
-        title: 'Updated Midterm',
-        durationMinutes: 45,
-        rateScore: 70,
-        questions: [
+    await expect(
+      service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any),
+    ).rejects.toThrow('You can only transition exams for your courses');
+  });
+
+  it('ME-033 — should_throw_bad_request_for_invalid_status_transition', async () => {
+    // ME-033: Transition completed → active → 400.
+    // Mô tả: Kiểm tra invalid transition path.
+    // Expected: BadRequestException('Unsupported status transition').
+    const mockExam = {
+      ...createMockExam({ status: 'completed' }),
+      courseId: createMockCourse(),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
+    });
+
+    await expect(
+      service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any),
+    ).rejects.toThrow('Unsupported status transition');
+  });
+
+  it('ME-034 — should_return_same_exam_when_status_already_matches', async () => {
+    // ME-034: Transition same status → trả exam hiện tại.
+    // Mô tả: status === nextStatus → no-op.
+    // Expected: Trả exam không thay đổi.
+    const mockExam = {
+      ...createMockExam({ status: 'active' }),
+      courseId: createMockCourse(),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
+    });
+
+    const result = await service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any);
+    expect(result.status).toBe('active');
+  });
+
+  it('ME-035 — should_throw_when_activating_before_start_time', async () => {
+    // ME-035: Activate exam trước startTime → 400.
+    // Mô tả: Kiểm tra guard time cho activation.
+    // Expected: BadRequestException('Cannot activate before start time').
+    const farFutureStart = new Date(Date.now() + 86400000 * 7);
+    const farFutureEnd = new Date(Date.now() + 86400000 * 14);
+    const mockExam = {
+      ...createMockExam({ status: 'scheduled', startTime: farFutureStart, endTime: farFutureEnd }),
+      courseId: createMockCourse(),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
+    });
+
+    await expect(
+      service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any),
+    ).rejects.toThrow('Cannot activate before start time');
+  });
+
+  it('ME-036 — should_throw_when_completing_before_end_time', async () => {
+    // ME-036: Complete exam trước endTime → 400.
+    // Mô tả: Kiểm tra guard time cho completion.
+    // Expected: BadRequestException('Cannot complete before end time').
+    const pastStart = new Date(Date.now() - 86400000);
+    const futEnd = new Date(Date.now() + 86400000);
+    const mockExam = {
+      ...createMockExam({ status: 'active', startTime: pastStart, endTime: futEnd }),
+      courseId: createMockCourse(),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
+    });
+
+    await expect(
+      service.transitionExamStatus(EXAM_ID, 'completed' as any, mockTeacher as any),
+    ).rejects.toThrow('Cannot complete before end time');
+  });
+
+  // ==================== GET EXAM RESULTS ====================
+
+  it('ME-037 — should_get_exam_results_successfully', async () => {
+    // ME-037: Teacher lấy kết quả thi thành công.
+    // Mô tả: getExamResults trả danh sách submissions.
+    // Expected: Trả ExamResultsResponseDto.
+    const mockExam = createMockExam({ rateScore: 50 });
+    examModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    const mockStudentDoc = {
+      _id: new Types.ObjectId(STUDENT_ID),
+      fullName: 'Student A',
+      username: 'student_a',
+    };
+    submissionModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([
+            {
+              _id: new Types.ObjectId(),
+              studentId: mockStudentDoc,
+              score: 80,
+              submittedAt: new Date(),
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.getExamResults(EXAM_ID, mockTeacher as any);
+    expect(result.exam.title).toBe('Midterm Exam');
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('ME-038 — should_throw_bad_request_for_invalid_exam_id_in_results', async () => {
+    // ME-038: examId sai format → 400.
+    // Mô tả: getExamResults với invalid ObjectId.
+    // Expected: BadRequestException('Invalid exam ID').
+    await expect(
+      service.getExamResults('invalid-id', mockTeacher as any),
+    ).rejects.toThrow('Invalid exam ID');
+  });
+
+  it('ME-039 — should_throw_forbidden_when_viewing_results_of_other_teachers_exam', async () => {
+    // ME-039: Teacher xem results exam của teacher khác → 403.
+    // Mô tả: Ownership check trong getExamResults.
+    // Expected: ForbiddenException.
+    const mockExam = createMockExam();
+    examModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(
+      createMockCourse({ teacherId: new Types.ObjectId(TEACHER_B_ID) }),
+    );
+
+    await expect(
+      service.getExamResults(EXAM_ID, mockTeacher as any),
+    ).rejects.toThrow('You can only view results for exams in your courses');
+  });
+
+  it('ME-040 — should_skip_student_without_username_in_results', async () => {
+    // ME-040: Student bị xóa (username null) → skip trong kết quả.
+    // Mô tả: Kiểm tra branch !student || !student.username.
+    // Expected: Kết quả results.length = 0.
+    const mockExam = createMockExam();
+    examModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(mockExam) });
+    courseModel.findById.mockResolvedValue(createMockCourse());
+    submissionModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([
+            {
+              _id: new Types.ObjectId(),
+              studentId: new Types.ObjectId(), // Not populated, ObjectId
+              score: 80,
+            },
+          ]),
+        }),
+      }),
+    });
+    userModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+
+    const result = await service.getExamResults(EXAM_ID, mockTeacher as any);
+    expect(result.results).toHaveLength(0);
+  });
+
+  // ==================== GET MY COMPLETED EXAMS ====================
+
+  it('ME-041 — should_throw_bad_request_for_invalid_user_id_in_completed', async () => {
+    // ME-041: user.id sai format → 400.
+    // Mô tả: getMyCompletedExams với invalid ObjectId.
+    // Expected: BadRequestException('Invalid user ID format.').
+    await expect(
+      service.getMyCompletedExams({ id: 'invalid-id' } as any),
+    ).rejects.toThrow('Invalid user ID format.');
+  });
+
+  // ==================== GET EXAM FOR TAKING ====================
+
+  it('ME-042 — should_throw_not_found_when_taking_nonexistent_exam', async () => {
+    // ME-042: getExamForTaking với publicId không tồn tại → 404.
+    // Mô tả: Exam not found.
+    // Expected: NotFoundException('Exam not found.').
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(null),
+        }),
+      }),
+    });
+
+    await expect(
+      service.getExamForTaking('E999999', mockStudent as any),
+    ).rejects.toThrow('Exam not found.');
+  });
+
+  it('ME-043 — should_throw_bad_request_when_taking_inactive_exam', async () => {
+    // ME-043: Exam status scheduled → 400.
+    // Mô tả: getExamForTaking requires active status.
+    // Expected: BadRequestException('This exam is not active.').
+    const mockExam = { ...createMockExam({ status: 'scheduled' }), questions: [] };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
+    });
+
+    await expect(
+      service.getExamForTaking('E123456', mockStudent as any),
+    ).rejects.toThrow('This exam is not active.');
+  });
+
+  // ==================== SUBMIT EXAM ====================
+
+  it('ME-044 — should_throw_not_found_when_submitting_nonexistent_exam', async () => {
+    // ME-044: submitExam với publicId không tồn tại → 404.
+    // Mô tả: Exam not found.
+    // Expected: NotFoundException('Exam not found.').
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockResolvedValue(null),
+      }),
+    });
+
+    await expect(
+      service.submitExam('E999999', mockStudent as any, { answers: [] } as any),
+    ).rejects.toThrow('Exam not found.');
+  });
+
+  it('ME-045 — should_throw_bad_request_when_submitting_after_end_time', async () => {
+    // ME-045: Nộp bài khi đã hết giờ → 400.
+    // Mô tả: endTime < now.
+    // Expected: BadRequestException('The time for this exam has ended.').
+    const pastEnd = new Date(Date.now() - 3600000);
+    const mockExam = {
+      ...createMockExam({ status: 'active', endTime: pastEnd }),
+      courseId: createMockCourse(),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockResolvedValue(mockExam),
+      }),
+    });
+
+    await expect(
+      service.submitExam('E123456', mockStudent as any, { answers: [] } as any),
+    ).rejects.toThrow('The time for this exam has ended.');
+  });
+
+  it('ME-046 — should_throw_forbidden_when_submitting_duplicate', async () => {
+    // ME-046: Student nộp bài lần 2 → 403.
+    // Mô tả: Existing submission found.
+    // Expected: ForbiddenException('You have already submitted this exam.').
+    const futureEndTime = new Date(Date.now() + 86400000);
+    const mockExam = {
+      ...createMockExam({ status: 'active', endTime: futureEndTime }),
+      courseId: createMockCourse(),
+      questions: [],
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockResolvedValue(mockExam),
+      }),
+    });
+    submissionModel.findOne.mockResolvedValue({ _id: 'existing' });
+
+    await expect(
+      service.submitExam('E123456', mockStudent as any, { answers: [] } as any),
+    ).rejects.toThrow('You have already submitted this exam.');
+  });
+
+  // ==================== PROCESS AUTOMATIC STATUS TRANSITIONS ====================
+
+  it('ME-047 — should_process_automatic_transitions_for_scheduled_exams', async () => {
+    // ME-047: Scheduled exam quá startTime → tự chuyển active.
+    // Mô tả: processAutomaticStatusTransitions cron job.
+    // Expected: findOneAndUpdate gọi với status active.
+    const pastStart = new Date(Date.now() - 3600000);
+    const futEnd = new Date(Date.now() + 3600000);
+    examModel.find.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
           {
-            content: 'Updated Question',
-            answerQuestion: 1,
-            answer: [
-              { content: 'Correct' },
-              { content: 'Wrong 1' },
-              { content: 'Wrong 2' },
-              { content: 'Wrong 3' },
-            ],
+            _id: new Types.ObjectId(EXAM_ID),
+            status: 'scheduled',
+            startTime: pastStart,
+            endTime: futEnd,
+            courseId: new Types.ObjectId(COURSE_ID),
           },
-        ],
-      });
+        ]),
+      }),
+    });
+    examModel.findOneAndUpdate.mockResolvedValue(
+      createMockExam({ status: 'active' }),
+    );
+    courseModel.findById.mockResolvedValue(createMockCourse());
 
-      const response = await request(app.getHttpServer())
-        .put(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(payload);
+    await service.processAutomaticStatusTransitions();
+    expect(examModel.findOneAndUpdate).toHaveBeenCalled();
+  });
 
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exam?.title).toBe('Updated Midterm');
-      expect(response.body?.data?.exam?.questions).toHaveLength(1);
+  it('ME-048 — should_skip_transition_when_no_candidates', async () => {
+    // ME-048: Không có exam cần transition → không làm gì.
+    // Mô tả: processAutomaticStatusTransitions with empty result.
+    // Expected: findOneAndUpdate không được gọi.
+    examModel.find.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    });
+    examModel.findOneAndUpdate = jest.fn();
 
-      const remainedOldQuestions = await questionModel.countDocuments({
-        _id: { $in: previousQuestionIds },
-      });
-      expect(remainedOldQuestions).toBe(0);
+    await service.processAutomaticStatusTransitions();
+    expect(examModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  // ==================== EDGE CASES ====================
+
+  it('ME-049 — should_throw_when_teacher_id_is_invalid_objectid', async () => {
+    // ME-049: teacher.id không phải ObjectId hợp lệ → 403.
+    // Mô tả: createExam với teacher.id = 'abc'.
+    // Expected: ForbiddenException('Invalid teacher identifier').
+    await expect(
+      service.createExam(createValidExamDto(), { id: 'abc', role: 'teacher' } as any),
+    ).rejects.toThrow('Invalid teacher identifier');
+  });
+
+  it('ME-050 — should_throw_when_answerQuestion_out_of_range', async () => {
+    // ME-050: answerQuestion = 5 (chỉ có 4 choices) → 400.
+    // Mô tả: normalizeChoices với index ngoài phạm vi.
+    // Expected: BadRequestException.
+    courseModel.findById.mockResolvedValue(createMockCourse());
+
+    await expect(
+      service.createExam(
+        createValidExamDto({
+          questions: [
+            {
+              content: 'Q1',
+              answerQuestion: 5,
+              answer: [
+                { content: 'A' },
+                { content: 'B' },
+                { content: 'C' },
+                { content: 'D' },
+              ],
+            },
+          ],
+        }),
+        mockTeacher as any,
+      ),
+    ).rejects.toThrow('answerQuestion must reference one of the provided choices');
+  });
+
+  // ==================== GET SUBMISSION RESULT FOR TEACHER ====================
+
+  it('ME-051 — should_throw_bad_request_for_invalid_exam_id_in_teacher_submission', async () => {
+    // ME-051: examId sai format trong getSubmissionResultForTeacher → 400.
+    // Mô tả: Kiểm tra validation ObjectId.
+    // Expected: BadRequestException('Invalid exam ID').
+    await expect(
+      service.getSubmissionResultForTeacher('invalid-id', EXAM_ID, mockTeacher as any),
+    ).rejects.toThrow('Invalid exam ID');
+  });
+
+  it('ME-052 — should_throw_not_found_for_nonexistent_submission_in_teacher_view', async () => {
+    // ME-052: submissionId không tồn tại → 404.
+    // Mô tả: getSubmissionResultForTeacher loadSubmissionWithExam trả null.
+    // Expected: NotFoundException('Submission not found.').
+    const populateChain052 = {
+      populate: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(null),
+    };
+    submissionModel.findById.mockReturnValue({
+      populate: jest.fn().mockReturnValue(populateChain052),
     });
 
-    it('should_return_bad_request_when_updating_with_invalid_course_id', async () => {
-      // TC_EXAM_024: Update exam với courseId sai định dạng phải bị từ chối.
-      // Mô tả: Kiểm tra validation courseId ở update.
-      // Expected: HTTP 400.
-      const teacher = await createUser('teacher', 'Teacher Update Invalid Course');
-      const course = await createCourse(teacher._id, 'Update Invalid');
-      const exam = await seedExam({ courseId: course._id });
+    await expect(
+      service.getSubmissionResultForTeacher(EXAM_ID, STUDENT_ID, mockTeacher as any),
+    ).rejects.toThrow('Submission not found.');
+  });
 
-      const payload = buildCreateExamPayload('invalid-course-id');
-
-      const response = await request(app.getHttpServer())
-        .put(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(payload);
-
-      expect(response.status).toBe(400);
+  it('ME-053 — should_throw_not_found_for_nonexistent_submission_in_student_view', async () => {
+    // ME-053: Student getSubmissionResult với submissionId không tồn tại → 404.
+    // Mô tả: loadSubmissionWithExam trả null.
+    // Expected: NotFoundException.
+    submissionModel.findById.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      }),
     });
 
-    it('should_return_forbidden_when_updating_exam_to_foreign_course', async () => {
-      // TC_EXAM_025: Teacher không được update exam sang course của teacher khác.
-      // Mô tả: Kiểm tra rule ownership khi update exam.
-      // Expected: HTTP 403.
-      const teacherA = await createUser('teacher', 'Teacher A');
-      const teacherB = await createUser('teacher', 'Teacher B');
-      const courseA = await createCourse(teacherA._id, 'Course A');
-      const courseB = await createCourse(teacherB._id, 'Course B');
-      const exam = await seedExam({ courseId: courseA._id });
+    await expect(
+      service.getSubmissionResult(STUDENT_ID, mockStudent as any),
+    ).rejects.toThrow('Submission not found.');
+  });
 
-      const payload = buildCreateExamPayload(String(courseB._id), {
-        title: 'Illegal update',
-      });
+  it('ME-054 — should_throw_bad_request_for_invalid_submission_id_format', async () => {
+    // ME-054: submissionId sai format → 400.
+    // Mô tả: loadSubmissionWithExam với invalid ObjectId.
+    // Expected: BadRequestException('Invalid submission ID').
+    await expect(
+      service.getSubmissionResult('invalid-id', mockStudent as any),
+    ).rejects.toThrow('Invalid submission ID');
+  });
 
-      const response = await request(app.getHttpServer())
-        .put(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(teacherA._id))
-        .set('x-user-role', 'teacher')
-        .send(payload);
-
-      expect(response.status).toBe(403);
+  it('ME-055 — should_return_empty_when_courseId_filter_not_in_teacher_courses', async () => {
+    // ME-055: courseId không thuộc teacher → trả rỗng.
+    // Mô tả: listExamSummaries filter courseId ngoài phạm vi.
+    // Expected: { exams: [], pagination: { total: 0 } }.
+    const teacherCourse = createMockCourse();
+    courseModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([teacherCourse]),
+      }),
     });
 
-    it('should_transition_status_to_active_successfully', async () => {
-      // TC_EXAM_026: Teacher chuyển trạng thái exam scheduled -> active thành công.
-      // Mô tả: Kiểm tra API transition status hợp lệ.
-      // Expected: HTTP 200, status đổi thành active và có notification.
-      const teacher = await createUser('teacher', 'Teacher Status');
-      const course = await createCourse(teacher._id, 'Status Course');
-      const exam = await seedExam({
-        courseId: course._id,
+    const otherCourseId = '607f1f77bcf86cd799439099';
+    const result = await service.listExamSummaries(TEACHER_ID, {
+      courseId: otherCourseId,
+    } as any);
+
+    expect(result.exams).toEqual([]);
+    expect(result.pagination.total).toBe(0);
+  });
+
+  it('ME-056 — should_throw_bad_request_for_invalid_courseId_in_list', async () => {
+    // ME-056: courseId sai format trong listExamSummaries → 400.
+    // Mô tả: courseId filter không phải ObjectId hợp lệ.
+    // Expected: BadRequestException('Invalid course ID').
+    courseModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([createMockCourse()]),
+      }),
+    });
+
+    await expect(
+      service.listExamSummaries(TEACHER_ID, { courseId: 'invalid!!' } as any),
+    ).rejects.toThrow('Invalid course ID');
+  });
+
+  it('ME-057 — should_transition_exam_status_and_save_successfully', async () => {
+    // ME-057: Transition scheduled → active thành công.
+    // Mô tả: transitionExamStatus save exam mới + gọi notification.
+    // Expected: Trả exam với status mới.
+    const pastStart = new Date(Date.now() - 3600000);
+    const futEnd = new Date(Date.now() + 3600000);
+    const mockExam = {
+      ...createMockExam({ status: 'scheduled', startTime: pastStart, endTime: futEnd }),
+      courseId: createMockCourse(),
+      questions: [],
+      save: jest.fn().mockResolvedValue(undefined),
+      toObject: jest.fn().mockReturnValue({
+        _id: new Types.ObjectId(EXAM_ID),
         status: 'scheduled',
-        startTime: new Date(Date.now() - 10 * 60 * 1000),
-        endTime: new Date(Date.now() + 50 * 60 * 1000),
-      });
-
-      const response = await request(app.getHttpServer())
-        .patch(`/exams/${String(exam._id)}/status`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send({ status: 'active' });
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exam?.status).toBe('active');
-      expect(notificationServiceMock.createNotification).toHaveBeenCalledTimes(1);
+        startTime: pastStart,
+        endTime: futEnd,
+        questions: [],
+      }),
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
     });
 
-    it('should_return_bad_request_for_unsupported_status_transition', async () => {
-      // TC_EXAM_027: Chuyển trạng thái không hợp lệ phải bị từ chối.
-      // Mô tả: Kiểm tra transition scheduled -> completed trực tiếp.
-      // Expected: HTTP 400.
-      const teacher = await createUser('teacher', 'Teacher Bad Transition');
-      const course = await createCourse(teacher._id, 'Transition Course');
-      const exam = await seedExam({ courseId: course._id, status: 'scheduled' });
+    const result = await service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any);
+    expect(mockExam.save).toHaveBeenCalled();
+    expect(result).toBeDefined();
+  });
 
-      const response = await request(app.getHttpServer())
-        .patch(`/exams/${String(exam._id)}/status`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send({ status: 'completed' });
-
-      expect(response.status).toBe(400);
+  it('ME-058 — should_get_teacher_submission_result_successfully', async () => {
+    // ME-058: Teacher xem chi tiết submission thành công.
+    // Mô tả: getSubmissionResultForTeacher trả ExamResultDetailDto.
+    // Expected: Trả data với submissionId đúng.
+    const mockQuestion = {
+      _id: new Types.ObjectId(),
+      content: 'Q1',
+      answerQuestion: 2,
+      answer: [
+        { content: 'A', isCorrect: false },
+        { content: 'B', isCorrect: true },
+        { content: 'C', isCorrect: false },
+        { content: 'D', isCorrect: false },
+      ],
+    };
+    const mockExamData = {
+      _id: new Types.ObjectId(EXAM_ID),
+      publicId: 'E123456',
+      title: 'Test Exam',
+      rateScore: 70,
+      courseId: {
+        _id: new Types.ObjectId(COURSE_ID),
+        courseName: 'Test Course',
+        teacherId: new Types.ObjectId(TEACHER_ID),
+      },
+      questions: [mockQuestion],
+    };
+    const subId = new Types.ObjectId();
+    const mockSubmission = {
+      _id: subId,
+      studentId: {
+        _id: new Types.ObjectId(STUDENT_ID),
+        fullName: 'Student A',
+        username: 'student_a',
+      },
+      examId: mockExamData,
+      score: 80,
+      submittedAt: new Date(),
+      answers: [{ questionId: mockQuestion._id, answerNumber: 2 }],
+    };
+    const populateChain = {
+      populate: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(mockSubmission),
+    };
+    const populateChain058 = {
+      populate: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(mockSubmission),
+    };
+    submissionModel.findById.mockReturnValue({
+      populate: jest.fn().mockReturnValue(populateChain058),
     });
 
-    it('should_delete_exam_and_related_questions_submissions', async () => {
-      // TC_EXAM_028: Xóa exam phải xóa cascade questions và submissions liên quan.
-      // Mô tả: Kiểm tra luồng delete exam và dọn dữ liệu liên quan.
-      // Expected: HTTP 200, exam/questions/submissions đều bị xóa.
-      const teacher = await createUser('teacher', 'Teacher Delete');
-      const student = await createUser('student', 'Student Delete');
-      const course = await createCourse(teacher._id, 'Delete Course');
-      const exam = await seedExam({
-        courseId: course._id,
-        status: 'active',
-        startTime: new Date(Date.now() - 30 * 60 * 1000),
-        endTime: new Date(Date.now() + 30 * 60 * 1000),
-        questionCount: 2,
-      });
+    const result = await service.getSubmissionResultForTeacher(
+      EXAM_ID, String(subId), mockTeacher as any,
+    );
+    expect(result.submissionId).toBe(String(subId));
+    expect(result.exam.examPublicId).toBe('E123456');
+  });
 
-      await submissionModel.create({
-        studentId: student._id,
-        examId: exam._id,
-        score: 80,
-        status: 'graded',
-        submittedAt: new Date(),
-        answers: [
-          { questionId: exam.questions[0], answerNumber: 2 },
-          { questionId: exam.questions[1], answerNumber: 2 },
-        ],
-      });
-
-      const response = await request(app.getHttpServer())
-        .delete(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-
-      const remainedExam = await examModel.findById(exam._id);
-      const remainedQuestions = await questionModel.countDocuments({
-        _id: { $in: exam.questions },
-      });
-      const remainedSubmissions = await submissionModel.countDocuments({
-        examId: exam._id,
-      });
-
-      expect(remainedExam).toBeNull();
-      expect(remainedQuestions).toBe(0);
-      expect(remainedSubmissions).toBe(0);
-    });
-
-    it('should_return_forbidden_when_deleting_exam_of_other_teacher', async () => {
-      // TC_EXAM_029: Teacher không được xóa exam của teacher khác.
-      // Mô tả: Kiểm tra ownership khi delete exam.
-      // Expected: HTTP 403 và exam vẫn còn trong DB.
-      const owner = await createUser('teacher', 'Owner Teacher');
-      const attacker = await createUser('teacher', 'Attacker Teacher');
-      const course = await createCourse(owner._id, 'Owner Delete Course');
-      const exam = await seedExam({ courseId: course._id });
-
-      const response = await request(app.getHttpServer())
-        .delete(`/exams/${String(exam._id)}`)
-        .set('x-user-id', String(attacker._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(403);
-      expect(await examModel.findById(exam._id)).toBeTruthy();
-    });
-
-    it('should_get_exam_results_for_teacher_with_pass_fail_mapping', async () => {
-      // TC_EXAM_030: Giáo viên xem kết quả thi có mapping pass/fail đúng.
-      // Mô tả: Kiểm tra endpoint exam results và rule rateScore.
-      // Expected: HTTP 200, có đủ kết quả và trạng thái pass/fail chính xác.
-      const teacher = await createUser('teacher', 'Teacher Results');
-      const student1 = await createUser('student', 'Student One');
-      const student2 = await createUser('student', 'Student Two');
-      const course = await createCourse(teacher._id, 'Results Course');
-      const exam = await seedExam({
-        courseId: course._id,
-        status: 'completed',
-        startTime: new Date(Date.now() - 4 * 60 * 60 * 1000),
-        endTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
+  it('ME-059 — should_throw_when_submission_exam_mismatch_in_teacher_view', async () => {
+    // ME-059: Submission thuộc exam khác → 400.
+    // Mô tả: examId trong URL khác examId trong submission.
+    // Expected: BadRequestException('Submission does not belong to the specified exam').
+    const differentExamId = new Types.ObjectId();
+    const subId = new Types.ObjectId();
+    const mockSubmission = {
+      _id: subId,
+      studentId: { _id: new Types.ObjectId(STUDENT_ID), fullName: 'S', username: 's' },
+      examId: {
+        _id: differentExamId,
+        publicId: 'E999999',
+        title: 'Other',
         rateScore: 70,
-      });
-
-      await submissionModel.insertMany([
-        {
-          studentId: student1._id,
-          examId: exam._id,
-          score: 80,
-          status: 'graded',
-          submittedAt: new Date(),
-          answers: [{ questionId: exam.questions[0], answerNumber: 2 }],
+        courseId: {
+          _id: new Types.ObjectId(COURSE_ID),
+          courseName: 'C',
+          teacherId: new Types.ObjectId(TEACHER_ID),
         },
-        {
-          studentId: student2._id,
-          examId: exam._id,
-          score: 60,
-          status: 'graded',
-          submittedAt: new Date(),
-          answers: [{ questionId: exam.questions[0], answerNumber: 1 }],
-        },
-      ]);
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/${String(exam._id)}/results`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(response.body?.success).toBe(true);
-      expect(response.body?.data?.results).toHaveLength(2);
-
-      const statuses = response.body?.data?.results
-        ?.map((item: any) => item.status)
-        .sort();
-      expect(statuses).toEqual(['fail', 'pass']);
+        questions: [],
+      },
+      score: 50,
+      submittedAt: new Date(),
+      answers: [],
+    };
+    const populateChain059 = {
+      populate: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(mockSubmission),
+    };
+    submissionModel.findById.mockReturnValue({
+      populate: jest.fn().mockReturnValue(populateChain059),
     });
 
-    it('should_transition_status_to_completed_successfully', async () => {
-      // TC_EXAM_037: Teacher chuyển trạng thái exam active -> completed thành công.
-      // Mô tả: Kiểm tra nhánh transition completed hợp lệ.
-      // Expected: HTTP 200, status = completed và có notification.
-      const teacher = await createUser('teacher', 'Teacher Complete Status');
-      const course = await createCourse(teacher._id, 'Complete Status Course');
-      const exam = await seedExam({
-        courseId: course._id,
+    await expect(
+      service.getSubmissionResultForTeacher(EXAM_ID, String(subId), mockTeacher as any),
+    ).rejects.toThrow('Submission does not belong to the specified exam');
+  });
+
+  it('ME-060 — should_list_exams_with_status_filter', async () => {
+    // ME-060: Filter exams theo status.
+    // Mô tả: listExamSummaries với status = 'active'.
+    // Expected: query.status = 'active' trong filter.
+    courseModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([createMockCourse()]),
+      }),
+    });
+    examModel.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(5) });
+    examModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([createMockExam({ status: 'active' })]),
+          }),
+        }),
+      }),
+    });
+
+    const result = await service.listExamSummaries(TEACHER_ID, {
+      status: 'active',
+      page: 1,
+      limit: 10,
+    } as any);
+
+    expect(result.pagination.total).toBe(5);
+    expect(result.exams.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('ME-061 — should_auto_transition_active_to_completed', async () => {
+    // ME-061: Active exam quá endTime → tự chuyển completed.
+    // Mô tả: processAutomaticStatusTransitions active→completed branch.
+    // Expected: findOneAndUpdate gọi với status completed.
+    const pastStart = new Date(Date.now() - 86400000 * 2);
+    const pastEnd = new Date(Date.now() - 3600000);
+    examModel.find.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            _id: new Types.ObjectId(EXAM_ID),
+            status: 'active',
+            startTime: pastStart,
+            endTime: pastEnd,
+            courseId: new Types.ObjectId(COURSE_ID),
+          },
+        ]),
+      }),
+    });
+    const updatedExam = createMockExam({ status: 'completed' });
+    examModel.findOneAndUpdate.mockResolvedValue(updatedExam);
+    courseModel.findById.mockResolvedValue(createMockCourse());
+
+    await service.processAutomaticStatusTransitions();
+    expect(examModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'active' }),
+      expect.objectContaining({ $set: expect.objectContaining({ status: 'completed' }) }),
+      expect.anything(),
+    );
+  });
+
+  it('ME-062 — should_skip_candidate_when_findOneAndUpdate_returns_null', async () => {
+    // ME-062: Race condition — findOneAndUpdate trả null → skip.
+    // Mô tả: processAutomaticStatusTransitions khi exam bị update bởi process khác.
+    // Expected: courseModel.findById không gọi.
+    const pastStart = new Date(Date.now() - 3600000);
+    const futEnd = new Date(Date.now() + 3600000);
+    examModel.find.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            _id: new Types.ObjectId(EXAM_ID),
+            status: 'scheduled',
+            startTime: pastStart,
+            endTime: futEnd,
+            courseId: new Types.ObjectId(COURSE_ID),
+          },
+        ]),
+      }),
+    });
+    examModel.findOneAndUpdate.mockResolvedValue(null);
+    courseModel.findById = jest.fn();
+
+    await service.processAutomaticStatusTransitions();
+    expect(courseModel.findById).not.toHaveBeenCalled();
+  });
+
+  it('ME-063 — should_skip_notification_when_course_not_found_in_auto_transition', async () => {
+    // ME-063: Course bị xóa → skip notification trong auto transition.
+    // Mô tả: courseModel.findById trả null sau findOneAndUpdate.
+    // Expected: Không throw, tiếp tục xử lý.
+    const pastStart = new Date(Date.now() - 3600000);
+    const futEnd = new Date(Date.now() + 3600000);
+    examModel.find.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            _id: new Types.ObjectId(EXAM_ID),
+            status: 'scheduled',
+            startTime: pastStart,
+            endTime: futEnd,
+            courseId: new Types.ObjectId(COURSE_ID),
+          },
+        ]),
+      }),
+    });
+    examModel.findOneAndUpdate.mockResolvedValue(createMockExam({ status: 'active' }));
+    courseModel.findById.mockResolvedValue(null);
+
+    // Should not throw
+    await expect(service.processAutomaticStatusTransitions()).resolves.not.toThrow();
+  });
+
+  it('ME-064 — should_transition_active_to_completed_and_save', async () => {
+    // ME-064: Transition active → completed thành công.
+    // Mô tả: transitionExamStatus save + emit notification (completed branch).
+    // Expected: exam.save gọi, notification emitted.
+    const pastStart = new Date(Date.now() - 86400000 * 2);
+    const pastEnd = new Date(Date.now() - 3600000);
+    const mockExam = {
+      ...createMockExam({ status: 'active', startTime: pastStart, endTime: pastEnd }),
+      courseId: createMockCourse(),
+      questions: [],
+      save: jest.fn().mockResolvedValue(undefined),
+      toObject: jest.fn().mockReturnValue({
+        _id: new Types.ObjectId(EXAM_ID),
         status: 'active',
-        startTime: new Date(Date.now() - 120 * 60 * 1000),
-        endTime: new Date(Date.now() - 10 * 60 * 1000),
-      });
-
-      const response = await request(app.getHttpServer())
-        .patch(`/exams/${String(exam._id)}/status`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send({ status: 'completed' });
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exam?.status).toBe('completed');
-      expect(notificationServiceMock.createNotification).toHaveBeenCalledTimes(1);
+        startTime: pastStart,
+        endTime: pastEnd,
+        questions: [],
+      }),
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
     });
 
-    it('should_return_bad_request_when_activating_exam_before_start_time', async () => {
-      // TC_EXAM_038: Không được kích hoạt exam trước startTime.
-      // Mô tả: Kiểm tra guard thời gian khi chuyển sang active.
-      // Expected: HTTP 400 và trạng thái không đổi.
-      const teacher = await createUser('teacher', 'Teacher Activate Early');
-      const course = await createCourse(teacher._id, 'Activate Early Course');
-      const exam = await seedExam({
-        courseId: course._id,
+    const result = await service.transitionExamStatus(EXAM_ID, 'completed' as any, mockTeacher as any);
+    expect(mockExam.save).toHaveBeenCalled();
+    expect(result).toBeDefined();
+  });
+
+  it('ME-065 — should_list_exams_with_missing_courseMap_entries', async () => {
+    // ME-065: Exams có courseId chưa nằm trong courseMap → fetch bổ sung.
+    // Mô tả: Covers lines 309-318 (missingCourseIds fetch).
+    // Expected: Trả exams với courseName bổ sung.
+    const unknownCourseId = new Types.ObjectId();
+    courseModel.find.mockReturnValueOnce({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([createMockCourse()]),
+      }),
+    });
+    examModel.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(1) });
+    examModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([
+              createMockExam({ courseId: unknownCourseId }),
+            ]),
+          }),
+        }),
+      }),
+    });
+    // Mock lần findById cho missing course
+    courseModel.find.mockReturnValueOnce({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          { _id: unknownCourseId, courseName: 'Fetched Course' },
+        ]),
+      }),
+    });
+
+    const result = await service.listExamSummaries(TEACHER_ID, {
+      page: 1,
+      limit: 10,
+    } as any);
+
+    expect(result.exams.length).toBe(1);
+  });
+
+  it('ME-066 — should_handle_notification_error_gracefully', async () => {
+    // ME-066: Notification service throw error → catch + log warning.
+    // Mô tả: emitTeacherExamStatusNotification catches error.
+    // Expected: Không throw, kết quả vẫn trả bình thường.
+    const pastStart = new Date(Date.now() - 3600000);
+    const futEnd = new Date(Date.now() + 3600000);
+    const mockExam = {
+      ...createMockExam({ status: 'scheduled', startTime: pastStart, endTime: futEnd }),
+      courseId: createMockCourse(),
+      questions: [],
+      save: jest.fn().mockResolvedValue(undefined),
+      toObject: jest.fn().mockReturnValue({
+        _id: new Types.ObjectId(EXAM_ID),
         status: 'scheduled',
-        startTime: new Date(Date.now() + 30 * 60 * 1000),
-        endTime: new Date(Date.now() + 90 * 60 * 1000),
-      });
-
-      const response = await request(app.getHttpServer())
-        .patch(`/exams/${String(exam._id)}/status`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send({ status: 'active' });
-
-      expect(response.status).toBe(400);
+        startTime: pastStart,
+        endTime: futEnd,
+        questions: [],
+      }),
+    };
+    examModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(mockExam),
+        }),
+      }),
     });
+    // Notification service throws
+    notificationServiceMock.createNotification.mockRejectedValueOnce(
+      new Error('Notification failed'),
+    );
 
-    it('should_delete_exam_successfully_when_identifier_is_public_id', async () => {
-      // TC_EXAM_039: Xóa exam bằng publicId vẫn phải thành công.
-      // Mô tả: Kiểm tra deleteExam hỗ trợ cả id/publicId.
-      // Expected: HTTP 200 và exam bị xóa khỏi DB.
-      const teacher = await createUser('teacher', 'Teacher Delete PublicId');
-      const course = await createCourse(teacher._id, 'Delete PublicId Course');
-      const exam = await seedExam({ courseId: course._id });
-
-      const response = await request(app.getHttpServer())
-        .delete(`/exams/${exam.publicId}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(200);
-      expect(await examModel.findById(exam._id)).toBeNull();
-    });
-
-    it('should_return_forbidden_when_other_teacher_requests_exam_results', async () => {
-      // TC_EXAM_040: Teacher khác không được xem kết quả exam không thuộc quyền.
-      // Mô tả: Kiểm tra ownership ở endpoint get exam results.
-      // Expected: HTTP 403.
-      const owner = await createUser('teacher', 'Owner Results');
-      const otherTeacher = await createUser('teacher', 'Other Results');
-      const course = await createCourse(owner._id, 'Owner Results Course');
-      const exam = await seedExam({
-        courseId: course._id,
-        status: 'completed',
-        startTime: new Date(Date.now() - 120 * 60 * 1000),
-        endTime: new Date(Date.now() - 60 * 60 * 1000),
-      });
-
-      const response = await request(app.getHttpServer())
-        .get(`/exams/${String(exam._id)}/results`)
-        .set('x-user-id', String(otherTeacher._id))
-        .set('x-user-role', 'teacher');
-
-      expect(response.status).toBe(403);
-    });
-
-    it('should_update_exam_successfully_when_identifier_is_public_id', async () => {
-      // TC_EXAM_043: Update exam bằng publicId phải thành công tương tự ObjectId.
-      // Mô tả: Kiểm tra tính nhất quán identifier giữa find và update.
-      // Expected: HTTP 200 và dữ liệu exam được cập nhật.
-      const teacher = await createUser('teacher', 'Teacher Update PublicId');
-      const course = await createCourse(teacher._id, 'Update PublicId Course');
-      const exam = await seedExam({ courseId: course._id, questionCount: 1 });
-
-      const payload = buildCreateExamPayload(String(course._id), {
-        title: 'Updated via PublicId',
-        durationMinutes: 50,
-      });
-
-      const response = await request(app.getHttpServer())
-        .put(`/exams/${exam.publicId}`)
-        .set('x-user-id', String(teacher._id))
-        .set('x-user-role', 'teacher')
-        .send(payload);
-
-      expect(response.status).toBe(200);
-      expect(response.body?.data?.exam?.title).toBe('Updated via PublicId');
-    });
+    // Should NOT throw — notification error is caught
+    const result = await service.transitionExamStatus(EXAM_ID, 'active' as any, mockTeacher as any);
+    expect(result).toBeDefined();
+    expect(mockExam.save).toHaveBeenCalled();
   });
 });

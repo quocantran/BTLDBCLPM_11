@@ -22,13 +22,11 @@ import {
   RefreshTokenDto,
   ChangePasswordDto,
   UpdateProfileDto,
-  VerifyFaceDto,
   ForgotPasswordDto,
   ResetPasswordDto,
-  ValidateImageDto,
 } from './dto/auth.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { Public, Roles } from '../../common/decorators/auth.decorator';
+import { Public } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/user.decorator';
 import { ResponseHelper } from '../../common/dto/response.dto';
 import type { IUser } from '../../common/interfaces';
@@ -302,34 +300,4 @@ export class AuthController {
     );
     return ResponseHelper.success(result, 'Profile updated successfully');
   }
-
-  // --- ENDPOINT MỚI CHO XÁC THỰC KHUÔN MẶT ---
-  @Post('verify-face')
-  @Roles('student') // Chỉ 'student' mới được gọi
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify student face against profile for exam' })
-  @ApiResponse({ status: 200, description: 'Face verified successfully.' })
-  @ApiResponse({ status: 401, description: 'Face verification failed.' })
-  @ApiResponse({
-    status: 400,
-    description: 'Profile image not found or invalid image data.',
-  })
-  async verifyFace(
-    @CurrentUser() user: IUser, // Lấy user từ payload
-    @Body() verifyFaceDto: VerifyFaceDto,
-  ) {
-    return this.authService.verifyFace(user, verifyFaceDto);
-  }
-
-  @Post('validate-profile-image')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Validate profile image using AI' })
-  @ApiBearerAuth()
-  @ApiResponse({ status: 200, description: 'Image is valid.' })
-  @ApiResponse({ status: 400, description: 'Image is invalid (e.g., blurry, not a face).' })
-  async validateProfileImage(@Body() validateImageDto: ValidateImageDto) {
-    return this.authService.validateProfileImage(validateImageDto.imageBase64);
-  }
-
 }
