@@ -1,0 +1,102 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM-UMC-001	CertificateController	issue()	POST + /certificates/issue	Kiểm tra cấp chứng chỉ thành công	"Authorization: Bearer {{teacherAccessToken}}
+examId = ""{{examId}}""
+studentId = ""{{studentId}}"""	"- Trả về mã 201
+- success = true
+- message = ""Certificate issued""
+- data tồn tại"	Pass	Trần Quốc An
+PM-UMC-002	CertificateController	issue()	POST + /certificates/issue	Kiểm tra cấp chứng chỉ khi không tìm thấy submission	"Authorization: Bearer {{teacherAccessToken}}
+examId = ""{{examIdWithoutSubmission}}""
+studentId = ""{{studentId}}"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-003	CertificateController	issue()	POST + /certificates/issue	Kiểm tra cấp chứng chỉ khi student không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+examId = ""{{examId}}""
+studentId = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-004	CertificateController	list()	GET + /certificates	Kiểm tra lấy danh sách chứng chỉ thành công	Authorization: Bearer {{teacherAccessToken}}	"- Trả về mã 200
+- success = true
+- message = ""Certificates fetched""
+- data là mảng
+- meta có page, limit, total"	Pass	Trần Quốc An
+PM-UMC-005	CertificateController	list()	GET + /certificates?issuedFrom=...&issuedTo=...	Kiểm tra lọc ngày khi issuedTo nhỏ hơn issuedFrom	"Authorization: Bearer {{teacherAccessToken}}
+issuedFrom = ""2026-05-10""
+issuedTo = ""2026-05-01"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-006	CertificateController	list()	GET + /certificates?courseName=\	Kiểm tra tìm theo courseName chứa ký tự regex không hợp lệ	"Authorization: Bearer {{teacherAccessToken}}
+courseName = ""\"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại
+- Không trả về mã 500"	Pass	Trần Quốc An
+PM-UMC-007	CertificateController	getById()	GET + /certificates/:id	Kiểm tra lấy chi tiết chứng chỉ thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{certificateId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Certificate fetched""
+- data tồn tại"	Pass	Trần Quốc An
+PM-UMC-008	CertificateController	getById()	GET + /certificates/:id	Kiểm tra lấy chi tiết chứng chỉ không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-009	CertificateController	getById()	GET + /certificates/:id	Kiểm tra lấy chi tiết chứng chỉ với ID sai định dạng	"Authorization: Bearer {{teacherAccessToken}}
+id = ""invalid-id"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-010	CertificateController	getByStudent()	GET + /certificates/student/:studentId	Kiểm tra lấy chứng chỉ theo student thành công	"Authorization: Bearer {{teacherAccessToken}}
+studentId = ""{{studentId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Certificates fetched""
+- data là mảng"	Pass	Trần Quốc An
+PM-UMC-011	CertificateController	getByStudent()	GET + /certificates/student/:studentId	Kiểm tra student chưa có chứng chỉ	"Authorization: Bearer {{teacherAccessToken}}
+studentId = ""{{newStudentId}}"""	"- Trả về mã 200
+- success = true
+- data là mảng rỗng"	Pass	Trần Quốc An
+PM-UMC-012	CertificateController	getByStudent()	GET + /certificates/student/:studentId?status=issued	Kiểm tra lọc chứng chỉ theo status ở endpoint student	"Authorization: Bearer {{teacherAccessToken}}
+studentId = ""{{studentId}}""
+status = ""issued"""	"- Trả về mã 200
+- success = true
+- data là mảng hợp lệ"	Pass	Trần Quốc An
+PM-UMC-013	CertificateController	getByCourse()	GET + /certificates/course/:courseId	Kiểm tra lấy chứng chỉ theo course thành công	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{courseId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Certificates fetched""
+- data là mảng"	Pass	Trần Quốc An
+PM-UMC-014	CertificateController	getByCourse()	GET + /certificates/course/:courseId	Kiểm tra course chưa có chứng chỉ	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{emptyCourseId}}"""	"- Trả về mã 200
+- success = true
+- data là mảng rỗng"	Pass	Trần Quốc An
+PM-UMC-015	CertificateController	getByCourse()	GET + /certificates/course/:courseId?status=revoked	Kiểm tra lọc chứng chỉ theo status ở endpoint course	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{courseId}}""
+status = ""revoked"""	"- Trả về mã 200
+- success = true
+- data là mảng hợp lệ"	Pass	Trần Quốc An
+PM-UMC-016	CertificateController	revoke()	PATCH + /certificates/:id/revoke	Kiểm tra thu hồi chứng chỉ thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{certificateId}}""
+reason = ""Cheating""
+transactionHash = ""0xrevokedhash"""	"- Trả về mã 200
+- success = true
+- message = ""Certificate revoked""
+- data.status = ""revoked"""	Pass	Trần Quốc An
+PM-UMC-017	CertificateController	revoke()	PATCH + /certificates/:id/revoke	Kiểm tra thu hồi chứng chỉ không truyền reason và transactionHash	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{certificateId}}"""	"- Trả về mã 200
+- success = true
+- data.status = ""revoked"""	Pass	Trần Quốc An
+PM-UMC-018	CertificateController	revoke()	PATCH + /certificates/:id/revoke	Kiểm tra thu hồi chứng chỉ không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-019	CertificateController	generateCertificate()	POST + /certificates/:id/generate	Kiểm tra tạo ảnh chứng chỉ thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{certificateId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Certificate image generated and uploaded successfully""
+- data có imageIpfsHash, metadataIpfsHash, imageGatewayUrl, metadataGatewayUrl"	Pass	Trần Quốc An
+PM-UMC-020	CertificateController	generateCertificate()	POST + /certificates/:id/generate	Kiểm tra tạo ảnh chứng chỉ với ID không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-UMC-021	CertificateController	generateCertificate()	POST + /certificates/:id/generate	Kiểm tra student gọi endpoint tạo ảnh chứng chỉ	"Authorization: Bearer {{studentAccessToken}}
+id = ""{{certificateId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An

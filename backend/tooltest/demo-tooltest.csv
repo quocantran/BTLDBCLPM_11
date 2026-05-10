@@ -1,0 +1,116 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM_AM_001	AuthenticationController	authentiacateUser()	POST + /api/auth/signin	Kiểm tra đăng nhập thành công	"username = ""admin""
+password = ""admin"""	"- Trạng thái 200
+- Trả về JWT và thông tin user 
+- Lưu thông tin và token vào môi trường"	Pass	Đỗ Gia Phong
+PM_AM_002	AuthenticationController	authentiacateUser()	POST + /api/auth/signin	Kiểm tra đăng nhập khi user không tồn tại	"""username"": ""user_khong_ton_tai_xyz""
+  ""password"": ""anypass"""	- Trả về mã lỗi 400 	Pass	Đỗ Gia Phong
+PM_AM_003	AuthenticationController	authentiacateUser()	POST + /api/auth/signin	Kiểm tra đăng nhập khi sai mật khẩu	"""username"": ""admin"",
+  ""password"": ""MATKHAUSAI999"""	- Trả về mã 401	Pass	Đỗ Gia Phong
+PM_AM_004	AuthenticationController	authentiacateUser()	POST + /api/auth/signin	Kiểm tra đăng nhập khi tài khoản bị xóa mềm	"""username"": ""lecture-01"",
+  ""password"": ""lecture-01"""	- Trả về mã lỗi 400	Pass	Đỗ Gia Phong
+PM_AM_005	AuthenticationController	resetPasswordRequest()	POST + /api/auth/password-reset-request	Kiểm tra thực hiện yêu cầu reset password thành công	email = "newuser_autotest@example.com"	"- trả về mã 200
+- Thông tin operationResult gồm : 
+ + operation name = REQUEST_PASSWORD_RESET
+ + operationResult = SUCCESS"	Fail	Đỗ Gia Phong
+PM_AM_006	AuthenticationController	resetPasswordRequest()	POST + /api/auth/password-reset-request	Kiểm tra thực hiện yêu cầu reset password khi email không tồn tại	"email": "email_khong_ton_tai_xyz@test.com"	"- Trả về mã thực hiện 200
+- Thông tin operationResult gồm : 
+ + operation name = REQUEST_PASSWORD_RESET
+ + operationResult = ERROR"	Pass	Đỗ Gia Phong
+PM_AM_007	AuthenticationController	resetPassword()	POST + /api/auth/password-reset	Kiểm tra thực hiện reset password thành công	"token = ""token""
+password = ""newpassword123"""	"- Trả về mã 400
+- Thông tin operationResult gồm : 
+ + operation name = PASSWORD_RESET
+ + operationResult = SUCCESS
+"	Fail	Đỗ Gia Phong
+PM_AM_008	AuthenticationController	resetPassword()	POST + /api/auth/password-reset	Kiểm tra reset password khi token không hợp lệ	"""token"": ""token_gia_khong_hop_le_xyz123"",
+  ""password"": ""newpassword123"""	"- Trả về mã 401
+- Thông tin operationResult gồm : 
+ + operation name = PASSWORD_RESET
+ + operationResult = ERROR
+"	Fail	Đỗ Gia Phong
+PM_AM_009	UserController	getUser()	GET + /api/users/profile	Kiểm tra lấy thông tin user thành công	username = "admin"	"- Trả về mã thực hiện 200
+- Thông tin user được tìm kiếm"	Pass	Đỗ Gia Phong
+PM_AM_010	UserController	getUser()	GET + /api/users/profile	Kiểm tra lấy thông tin user không tồn tại 	username = userkhongtontai_xyz	-Response chứa mã 404 và message không tìm thấy	Pass	Đỗ Gia Phong
+PM_AM_011	UserController	getUser()	GET + /api/users/profile	Kiểm tra lấy thông tin user khi không truyền username	username = ""	"- Trả về 200
+- Hiển thị thông tin user đang tìm kiếm"	Fail	Đỗ Gia Phong
+PM_AM_012	UserController	checkUsername()	GET + /api/users/check-username	Kiểm trả username có tồn tại	value = 'admin'	"- Trả về mã 200
+- Trả về giá trị true"	Pass	Đỗ Gia Phong
+PM_AM_013	UserController	checkUsername()	GET + /api/users/check-username	Kiểm trả username không tồn tại	value = 'user_chua_ton_tai_xyz999'	"- Trả về mã 200
+- Trả về giá trị false"	Pass	Đỗ Gia Phong
+PM_AM_014	UserController	checkEmail()	GET + /api/users/check-email	Kiểm tra check email tồn tại	value = 'newuser_autotest@example.com'	"- Trả về mã 200
+- Trả về giá trị true"	Pass	Đỗ Gia Phong
+PM_AM_015	UserController	checkEmail()	GET + /api/users/check-email	Kiểm tra check email không tồn tại	value = 'value=email_chua_ton_tai_xyz999@test.com'	"- Trả về mã 200
+- Trả về giá trị false"	Pass	Đỗ Gia Phong
+PM_AM_016	UserController	updateEmail()	PATCH + /api/users/{id}/email/updating	Kiểm tra thực hiện update email thành công	"id = 59148
+password = test-2
+email = newemail2_autotest@example.com"	"- Trả mã 200
+- Thông báo đổi email thành công
+- Trả email mới trong data"	Pass	Đỗ Gia Phong
+PM_AM_017	UserController	updateEmail()	PATCH + /api/users/{id}/email/updating	Kiểm tra thực hiện update email khi password sai	"id = 59148
+password = MATKHAUSAI123
+email = newemail@example.com"	"- Trả về trong response : 
++ Mã lỗi 417
++ Message thông báo mật khẩu sai "	Pass	Đỗ Gia Phong
+PM_AM_018	UserController	updatePassword()	PATCH + api/users/{id}/password/updating	Kiểm tra thực hiện update password thành công	"id = 59148
+currentPassword= test-2
+newPassword= test"	"- Trả mã 200
+- Thông báo đổi mật khẩu thành công"	Pass	Đỗ Gia Phong
+PM_AM_019	UserController	updatePassword()	PATCH + api/users/{id}/password/updating	Kiểm tra thực hiện update password khi password hiện thời không đúng	"id = 59148
+currentPassword= MATKHAUSAI
+newPassword= newpass456"	"- Trả mã thực thi 200
+- Thông báo lỗi trong body 400"	Pass	Đỗ Gia Phong
+PM_AM_020	UserController	updatePassword()	PATCH + api/users/{id}/password/updating	Kiểm tra thực hiện update password khi password mới trùng password cũ	"id = 59148
+currentPassword= test
+newPassword= test"	"- Trả mã thực thi 200
+- Thông báo lỗi trong body 409"	Pass	Đỗ Gia Phong
+PM_AM_021	UserController	getUsersByPage()	GET + /api/users	Kiểm tra thực hiện lấy danh sách user theo phân trang	"page = 0
+size = 10"	"- Trả về 200
+- Response có cấu trúc phân trang
+- Số lượng 1 trang không quá 10"	Pass	Đỗ Gia Phong
+PM_AM_022	UserController	getUsersByPage()	GET + /api/users	Kiểm tra thực hiện lấy danh sách user theo phân trang mà không phải admin	"page = 0
+size = 10"	- Trả về mã 401	Pass	Đỗ Gia Phong
+PM_AM_023	UserController	searchUsersByUsernameOrEmail()	GET + /api/users/search	Kiểm tra thực hiện tìm kiếm user theo username hoặc email	"search-keyword = admin
+page = 0
+size = 10"	"- Trả về mã 200
+- Nhận mảng user
+- Kết quả tìm kiếm khớp với từ khóa"	Pass	Đỗ Gia Phong
+PM_AM_024	UserController	createUser()	POST + /api/users	Tạo mới user thành công	"""username"": ""test-2"",
+  ""password"": ""test-2"",
+  ""email"": ""newuser2_autotest@example.com"",
+  ""profile"": {
+    ""firstName"": ""Auto"",
+    ""lastName"": ""Test""
+  }"	"- Trả về 200
+- Thông báo tạo user thành công"	Pass	Đỗ Gia Phong
+PM_AM_025	UserController	createUser()	POST + /api/users	Tạo mới user với username đã tồn tại	"{
+  ""username"": ""{{testUsername}}"",
+  ""password"": ""pass123"",
+  ""email"": ""duplicate_unique@example.com"",
+  ""profile"": { ""firstName"": ""Dup"", ""lastName"": ""User"" }
+}"	"- Trả về mã thực thi 400
+- Mã trong body là 409"	Pass	Đỗ Gia Phong
+PM_AM_026	UserController	createUser()	POST + /api/users	Tạo mới user với email đã tồn tại	"{
+  ""username"": ""unique_user_xyz_1"",
+  ""password"": ""pass123"",
+  ""email"": ""newuser2_autotest@example.com"",
+  ""profile"": { ""firstName"": ""Dup"", ""lastName"": ""Email"" }
+}"	"- Trả về mã thực thi 400
+- Mã trong body là 409"	Pass	Đỗ Gia Phong
+PM_AM_027	UserController	updateUser()	PUT + api/user/{id}	Update user thành công	"""id"" = 353
+""email"": ""updated@example.com"",
+  ""profile"": {
+    ""firstName"": ""Updated"",
+    ""lastName"": ""User""
+  }"	"- Trả về 200
+- Thông báo cập nhật thành công
+- Trả về dữ liệu mới cập nhật"	Pass	Đỗ Gia Phong
+PM_AM_028	UserController	deleteTempUser()	DELETE + api/user/{id}/delete/{delete}	Xóa tạm user	"id = 353
+delete = true"	"- Trả về 204
+- Body rỗng"	Pass	Đỗ Gia Phong
+PM_AM_029	UserController	deleteTempUser()	DELETE + api/user/{id}/delete/{delete}	Khôi phục user	"id = 353
+delete = false"	"- Trả về 204
+- Body rỗng"	Pass	Đỗ Gia Phong
+PM_AM_030	UserController	exportUsersToCSV()	GET + /api/users/deleted/{status}/export/users.csv	Xuất danh sách file user thành công	status = false	"- Trả về mã 200
+- Trả về đúng định dạng CSV"	Pass	Đỗ Gia Phong

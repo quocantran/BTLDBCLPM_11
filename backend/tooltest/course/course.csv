@@ -1,0 +1,79 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM-MC-001	CoursesController	createCourse()	POST + /courses	Kiểm tra teacher tạo khóa học thành công	"Authorization: Bearer {{teacherAccessToken}}
+courseName = ""Lập trình Python cơ bản""
+teacherId = ""{{teacherId}}"""	"- Trả về mã 201
+- success = true
+- message = ""Course created successfully""
+- data.course có: id, publicId, courseName, teacherId, enrollmentCount
+- data.course.publicId đúng regex C + 6 số
+- Lưu data.course.id vào collection variable teacherCourseId"	Pass	Trần Quốc An
+PM-MC-002	CoursesController	createCourse()	POST + /courses	Kiểm tra student tạo khóa học bị từ chối	"Authorization: Bearer {{studentAccessToken}}
+courseName = ""Hacked Course""
+teacherId = ""{{studentId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MC-003	CoursesController	createCourse()	POST + /courses	Kiểm tra tạo khóa học với courseName < 6 ký tự	"Authorization: Bearer {{teacherAccessToken}}
+courseName = ""AB""
+teacherId = ""{{teacherId}}"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại (validation)"	Pass	Trần Quốc An
+PM-MC-004	CoursesController	createCourse()	POST + /courses	Kiểm tra tạo khóa học với courseName > 100 ký tự	"Authorization: Bearer {{teacherAccessToken}}
+courseName = ""{{longCourseName250}}""
+teacherId = ""{{teacherId}}"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại (validation)"	Pass	Trần Quốc An
+PM-MC-005	CoursesController	getCoursesByTeacher()	GET + /courses/teacher/:teacherId	Kiểm tra lấy danh sách khóa học theo teacher thành công	"Authorization: Bearer {{teacherAccessToken}}
+teacherId = ""{{teacherId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Courses retrieved successfully""
+- data.courses là mảng"	Pass	Trần Quốc An
+PM-MC-006	CoursesController	getCoursesByTeacher()	GET + /courses/teacher/:teacherId?search=Python	Kiểm tra filter danh sách khóa học theo từ khóa	search = "Python"	"- Trả về mã 200
+- success = true
+- data.courses là mảng
+- Các phần tử trả về có courseName khớp keyword tìm kiếm"	Pass	Trần Quốc An
+PM-MC-007	CoursesController	getCoursesByTeacher()	GET + /courses/teacher/:teacherId?search=\	Kiểm tra search ký tự backslash không làm hệ thống crash	search = "\"	"- Trả về mã 400
+- success = false
+- error.message tồn tại
+- Không trả về mã 500"	Pass	Trần Quốc An
+PM-MC-008	CoursesController	getCoursesByTeacher()	GET + /courses/teacher/:teacherId	Kiểm tra teacher chưa có khóa học thì trả mảng rỗng	"Authorization: Bearer {{newTeacherAccessToken}}
+teacherId = ""{{newTeacherId}}"""	"- Trả về mã 200
+- success = true
+- data.courses là mảng rỗng"	Pass	Trần Quốc An
+PM-MC-009	CoursesController	deleteCourse()	DELETE + /courses/delete/:courseId	Kiểm tra teacher xóa khóa học của chính mình thành công	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{teacherCourseId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Course deleted successfully"""	Pass	Trần Quốc An
+PM-MC-010	CoursesController	deleteCourse()	DELETE + /courses/delete/:courseId	Kiểm tra student xóa khóa học bị từ chối	"Authorization: Bearer {{studentAccessToken}}
+courseId = ""{{teacherCourseId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MC-011	CoursesController	deleteCourse()	DELETE + /courses/delete/:courseId	Kiểm tra teacher A xóa khóa học teacher B bị từ chối	"Authorization: Bearer {{teacherAAccessToken}}
+courseId = ""{{teacherBCourseId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MC-012	CoursesController	deleteCourse()	DELETE + /courses/delete/:courseId	Kiểm tra xóa khóa học không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message chứa ""Course not found"""	Pass	Trần Quốc An
+PM-MC-013	CoursesController	updateCourseName()	PATCH + /courses/:courseId/name	Kiểm tra cập nhật tên khóa học thành công	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{teacherCourseId}}""
+courseName = ""New Course Name"""	"- Trả về mã 200
+- success = true
+- message = ""Course name updated successfully""
+- data.course.courseName phản ánh tên mới"	Pass	Trần Quốc An
+PM-MC-014	CoursesController	updateCourseName()	PATCH + /courses/:courseId/name	Kiểm tra cập nhật tên khóa học < 6 ký tự bị từ chối	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{teacherCourseId}}""
+courseName = ""ac"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại (validation)"	Pass	Trần Quốc An
+PM-MC-015	CoursesController	updateCourseName()	PATCH + /courses/:courseId/name	Kiểm tra cập nhật tên khóa học > 100 ký tự bị từ chối	"Authorization: Bearer {{teacherAccessToken}}
+courseId = ""{{teacherCourseId}}""
+courseName = ""{{longCourseName250}}"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại (validation)"	Pass	Trần Quốc An
+PM-MC-016	CoursesController	updateCourseName()	PATCH + /courses/:courseId/name	Kiểm tra teacher A cập nhật khóa học teacher B bị từ chối	"Authorization: Bearer {{teacherAAccessToken}}
+courseId = ""{{teacherBCourseId}}""
+courseName = ""Hacked By Teacher A"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An

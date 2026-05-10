@@ -1,0 +1,107 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM_UA_001	AuthController	register()	POST + /auth/register	Kiểm tra đăng ký thành công	"username = ""newuser_autotest""
+fullName = ""Auto Test""
+email = ""newuser_autotest@example.com""
+password = ""Password@123""
+role = ""student"""	"- Trả về mã 201
+- success = true
+- message = ""User registered successfully""
+- Có trường meta.timestamp
+- Không có trường data"	Pass	Trần Quốc An
+PM_UA_002	AuthController	register()	POST + /auth/register	Kiểm tra đăng ký khi username đã tồn tại	"username = ""newuser_autotest""
+fullName = ""Duplicate User""
+email = ""another_unique@example.com""
+password = ""Password@123""
+role = ""student"""	"- Trả về mã 409
+- message chứa ""Username already exists"""	Pass	Trần Quốc An
+PM_UA_003	AuthController	register()	POST + /auth/register	Kiểm tra đăng ký khi email đã tồn tại	"username = ""unique_user_xyz_1""
+fullName = ""Dup Email User""
+email = ""newuser_autotest@example.com""
+password = ""Password@123""
+role = ""student"""	"- Trả về mã 409
+- message chứa ""User with this email already exists"""	Pass	Trần Quốc An
+PM_UA_004	AuthController	login()	POST + /auth/login	Kiểm tra đăng nhập thành công bằng username	"identifier = ""newuser_autotest""
+password = ""Password@123"""	"- Trả về mã 200
+- success = true
+- message = ""Login successful""
+- data.accessToken tồn tại
+- data.refreshToken tồn tại
+- data.user chứa id, username, email, role
+- data.user không có passwordHash, refreshTokenHash
+- Lưu accessToken, refreshToken, userId vào collection variables"	Pass	Trần Quốc An
+PM_UA_005	AuthController	login()	POST + /auth/login	Kiểm tra đăng nhập thành công bằng email	"identifier = ""newuser_autotest@example.com""
+password = ""Password@123"""	"- Trả về mã 200
+- success = true
+- data.user.username = ""newuser_autotest"""	Pass	Trần Quốc An
+PM_UA_006	AuthController	login()	POST + /auth/login	Kiểm tra đăng nhập khi sai mật khẩu	"identifier = ""newuser_autotest""
+password = ""MATKHAUSAI_XYZ999"""	"- Trả về mã 401
+- message chứa ""Invalid credentials""
+- Không tiết lộ user có tồn tại hay không"	Pass	Trần Quốc An
+PM_UA_007	AuthController	login()	POST + /auth/login	Kiểm tra đăng nhập với SQL Injection và XSS trong identifier	"identifier = ""' OR 1=1; --""
+password = ""<script>alert(1)</script>"""	"- Trả về mã 401
+- Server không crash (không có mã 500)
+- Response hợp lệ, có trường message"	Pass	Trần Quốc An
+PM_UA_008	AuthController	requestPasswordReset()	POST + /auth/forgot-password	Kiểm tra gửi forgot-password cho email hợp lệ tồn tại	email = "newuser_autotest@example.com"	"- Trả về mã 200
+- success = true
+- message = ""If an account exists for that email, we sent password reset instructions.""
+- data.expiresInMinutes là số dương (mặc định = 15)"	Pass	Trần Quốc An
+PM_UA_009	AuthController	requestPasswordReset()	POST + /auth/forgot-password	Kiểm tra gửi forgot-password cho email không tồn tại	email = "email_khong_ton_tai_xyz@test.com"	"- Trả về mã 200
+- message = ""If an account exists for that email, we sent password reset instructions.""
+- message không chứa ""not found"" hoặc ""not exist""
+- Response giống hệt khi email tồn tại (chống user enumeration)"	Pass	Trần Quốc An
+PM_UA_010	AuthController	requestPasswordReset()	POST + /auth/forgot-password	Kiểm tra rate limit khi gọi forgot-password quá 5 lần trong 1 giờ	"email = ""newuser_autotest@example.com""
+(Gọi lần thứ 6 trong 1 giờ)"	"- Trả về mã 429
+- message chứa ""Too many password reset requests"""	Pass	Trần Quốc An
+PM_UA_011	AuthController	resetPassword()	POST + /auth/reset-password	Kiểm tra reset password khi password và confirmPassword không khớp	"token = ""{{resetToken}}""
+password = ""NewPassword@123""
+confirmPassword = ""DifferentPassword@456"""	"- Trả về mã 400
+- message chứa ""Passwords do not match"""	Pass	Trần Quốc An
+PM_UA_012	AuthController	resetPassword()	POST + /auth/reset-password	Kiểm tra reset password với token không hợp lệ / hết hạn	"token = ""token_gia_khong_hop_le_xyz123""
+password = ""NewPassword@123""
+confirmPassword = ""NewPassword@123"""	"- Trả về mã 401
+- message chứa ""Token invalid or expired""
+- Server không crash (không có mã 500)"	Pass	Trần Quốc An
+PM_UA_013	AuthController	getProfile()	GET + /auth/profile	Kiểm tra lấy profile thành công với JWT hợp lệ	Authorization: Bearer {{accessToken}}	"- Trả về mã 200
+- success = true
+- data.user chứa: id, username, email, role, fullName, dateOfBirth, imageUrl, citizenId, createdAt, updatedAt
+- Không có passwordHash, refreshTokenHash"	Pass	Trần Quốc An
+PM_UA_014	AuthController	getProfile()	GET + /auth/profile	Kiểm tra lấy profile khi không có JWT token	Không truyền Authorization header	"- Trả về mã 401
+- Không trả về dữ liệu user (không có trường data)"	Pass	Trần Quốc An
+PM_UA_015	AuthController	updateProfile()	PUT + /auth/profile	Kiểm tra cập nhật profile thành công (đầy đủ các trường)	"Authorization: Bearer {{accessToken}}
+fullName = ""Updated Full Name""
+email = ""updated_autotest@example.com""
+dateOfBirth = ""1999-05-15""
+imageUrl = ""https://example.com/avatar.jpg""
+citizenId = ""012345678901"""	"- Trả về mã 200
+- success = true
+- message chứa ""Profile updated successfully""
+- data.user phản ánh các thay đổi"	Pass	Trần Quốc An
+PM_UA_016	AuthController	updateProfile()	PUT + /auth/profile	Kiểm tra cập nhật profile khi email đã tồn tại của user khác	"Authorization: Bearer {{accessToken}}
+email = ""newuser_autotest@example.com"""	"- Trả về mã 409
+- message chứa ""Email already exists"""	Pass	Trần Quốc An
+PM_UA_017	AuthController	changePassword()	POST + /auth/change-password	Kiểm tra đổi mật khẩu khi sai current password	"Authorization: Bearer {{accessToken}}
+currentPassword = ""MATKHAUSAI_XYZ""
+newPassword = ""NewPassword@456"""	"- Trả về mã 401
+- message chứa ""Current password is incorrect"""	Pass	Trần Quốc An
+PM_UA_018	AuthController	changePassword()	POST + /auth/change-password	Kiểm tra đổi mật khẩu khi password mới trùng password cũ	"Authorization: Bearer {{accessToken}}
+currentPassword = ""Password@123""
+newPassword = ""Password@123"""	"- Trả về mã 409
+- message chứa ""New password must be different from current password"""	Pass	Trần Quốc An
+PM_UA_019	AuthController	changePassword()	POST + /auth/change-password	Kiểm tra đổi mật khẩu thành công	"Authorization: Bearer {{accessToken}}
+currentPassword = ""Password@123""
+newPassword = ""NewPassword@456"""	"- Trả về mã 200
+- success = true
+- message = ""Password changed successfully""
+- data.message = ""Password changed successfully"""	Pass	Trần Quốc An
+PM_UA_020	AuthController	refreshTokens()	POST + /auth/refresh	Kiểm tra refresh token hợp lệ	"refreshToken = ""{{refreshToken}}"""	"- Trả về mã 200
+- success = true
+- message = ""Tokens refreshed successfully""
+- data.accessToken là string có length > 10
+- data.refreshToken là string có length > 10
+- Lưu accessToken và refreshToken mới vào collection variables"	Pass	Trần Quốc An
+PM_UA_021	AuthController	refreshTokens()	POST + /auth/refresh	Kiểm tra dùng refresh token không hợp lệ	"refreshToken = ""token_gia_khong_hop_le_xyz123"""	"- Trả về mã 401
+- message chứa ""Invalid or expired refresh token"""	Pass	Trần Quốc An
+PM_UA_022	AuthController	refreshTokens()	POST + /auth/refresh	Kiểm tra dùng refresh token cũ sau khi đổi mật khẩu (token bị revoke)	"refreshToken = ""{{oldRefreshToken}}"" (token trước khi đổi mật khẩu ở PM_UA_019)"	"- Trả về mã 401
+- Token cũ bị vô hiệu hóa sau khi đổi mật khẩu (refreshTokenHash bị xóa)
+- message chứa ""Invalid refresh token"""	Pass	Trần Quốc An

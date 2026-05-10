@@ -1,0 +1,44 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM-VR-001	DashboardController	getTeacherDashboard()	GET + /dashboard/teacher	Kiểm tra teacher lấy dashboard của chính mình thành công	"Authorization: Bearer {{teacherAccessToken}}
+teacherId = ""{{teacherId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Teacher dashboard data retrieved successfully""
+- data.stats có totalStudents, activeExams, certificatesIssued
+- data.examPerformance có summary, records
+- data.activeExams là mảng"	Pass	Trần Quốc An
+PM-VR-002	DashboardController	getTeacherDashboard()	GET + /dashboard/teacher	Kiểm tra admin lấy dashboard của teacher thành công	"Authorization: Bearer {{adminAccessToken}}
+teacherId = ""{{teacherId}}"""	"- Trả về mã 200
+- success = true
+- data có stats, examPerformance, activeExams"	Pass	Trần Quốc An
+PM-VR-003	DashboardController	getTeacherDashboard()	GET + /dashboard/teacher	Kiểm tra student truy cập dashboard teacher	"Authorization: Bearer {{studentAccessToken}}
+teacherId = ""{{teacherId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-VR-004	DashboardController	getTeacherDashboard()	GET + /dashboard/teacher	Kiểm tra teacher truy cập dashboard của teacher khác	"Authorization: Bearer {{teacherAccessToken}}
+teacherId = ""{{otherTeacherId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-VR-005	DashboardController	getTeacherDashboard()	GET + /dashboard/teacher	Kiểm tra lấy dashboard teacher khi thiếu user context	teacherId = "{{teacherId}}" (không truyền Authorization header)	"- Trả về mã 401
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-VR-006	StudentDashboardController	getStudentDashboard()	GET + /dashboard/student	Kiểm tra student lấy dashboard thành công có dữ liệu	Authorization: Bearer {{studentAccessToken}}	"- Trả về mã 200
+- success = true
+- message = ""Student dashboard data retrieved successfully""
+- data.performance có points, averageScore, passRate
+- data.completedExams là mảng"	Pass	Trần Quốc An
+PM-VR-007	StudentDashboardController	getStudentDashboard()	GET + /dashboard/student	Kiểm tra student chưa có bài thi hoàn thành	Authorization: Bearer {{newStudentAccessToken}}	"- Trả về mã 200
+- success = true
+- data.performance.points là mảng rỗng
+- data.performance.averageScore = 0
+- data.performance.passRate = 0
+- data.completedExams là mảng rỗng"	Pass	Trần Quốc An
+PM-VR-008	StudentDashboardController	getStudentDashboard()	GET + /dashboard/student	Kiểm tra lấy dashboard student khi thiếu user context	Không truyền Authorization header	"- Trả về mã 401
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-VR-009	StudentDashboardController	getStudentDashboard()	GET + /dashboard/student	Kiểm tra lấy dashboard student khi user context thiếu id	Authorization hợp lệ nhưng payload user không có id	"- Trả về mã 401
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-VR-010	StudentDashboardController	getStudentDashboard()	GET + /dashboard/student	Kiểm tra lấy dashboard student khi studentId không hợp lệ	Authorization hợp lệ nhưng user.id không phải ObjectId	"- Trả về mã 400
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An

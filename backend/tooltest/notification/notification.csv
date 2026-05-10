@@ -1,0 +1,61 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM-MN-001	NotificationsController	listNotifications()	GET + /notifications	Kiểm tra lấy danh sách thông báo thành công	Authorization: Bearer {{accessToken}}	"- Trả về mã 200
+- success = true
+- message = ""Notifications retrieved successfully""
+- data.notifications là mảng
+- data.total, data.page, data.limit tồn tại"	Pass	Trần Quốc An
+PM-MN-002	NotificationsController	listNotifications()	GET + /notifications	Kiểm tra danh sách thông báo rỗng	Authorization: Bearer {{accessToken}} (user chưa có thông báo)	"- Trả về mã 200
+- success = true
+- data.notifications là mảng rỗng"	Pass	Trần Quốc An
+PM-MN-003	NotificationsController	listNotifications()	GET + /notifications?page=0&limit=0	Kiểm tra query phân trang không hợp lệ	"Authorization: Bearer {{accessToken}}
+page = 0
+limit = 0"	"- Trả về mã 400
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MN-004	NotificationsController	getUnreadCount()	GET + /notifications/unread-count	Kiểm tra lấy số lượng thông báo chưa đọc thành công	Authorization: Bearer {{accessToken}}	"- Trả về mã 200
+- success = true
+- message = ""Unread notification count retrieved successfully""
+- data.unread là số"	Pass	Trần Quốc An
+PM-MN-005	NotificationsController	getUnreadCount()	GET + /notifications/unread-count	Kiểm tra unread count bằng 0	Authorization: Bearer {{accessToken}} (user không có unread)	"- Trả về mã 200
+- success = true
+- data.unread = 0"	Pass	Trần Quốc An
+PM-MN-006	NotificationsController	getUnreadCount()	GET + /notifications/unread-count	Kiểm tra gọi unread-count khi không có JWT	Không truyền Authorization header	"- Trả về mã 401
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MN-007	NotificationsController	getNotification()	GET + /notifications/:id	Kiểm tra lấy chi tiết thông báo thành công	"Authorization: Bearer {{accessToken}}
+id = ""{{notificationId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Notification retrieved successfully""
+- data.notification.id tồn tại"	Pass	Trần Quốc An
+PM-MN-008	NotificationsController	getNotification()	GET + /notifications/:id	Kiểm tra lấy chi tiết thông báo không tồn tại	"Authorization: Bearer {{accessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MN-009	NotificationsController	getNotification()	GET + /notifications/:id	Kiểm tra lấy chi tiết thông báo với ID sai định dạng	"Authorization: Bearer {{accessToken}}
+id = ""invalid-id"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MN-010	NotificationsController	markNotificationAsRead()	PATCH + /notifications/:id/read	Kiểm tra đánh dấu thông báo đã đọc thành công	"Authorization: Bearer {{accessToken}}
+id = ""{{notificationId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Notification marked as read""
+- data.notification.isRead = true"	Pass	Trần Quốc An
+PM-MN-011	NotificationsController	markNotificationAsRead()	PATCH + /notifications/:id/read	Kiểm tra đánh dấu thông báo không tồn tại	"Authorization: Bearer {{accessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-MN-012	NotificationsController	markNotificationAsRead()	PATCH + /notifications/:id/read	Kiểm tra đánh dấu lại thông báo đã đọc	"Authorization: Bearer {{accessToken}}
+id = ""{{alreadyReadNotificationId}}"""	"- Trả về mã 200
+- success = true
+- data.notification.isRead = true"	Pass	Trần Quốc An
+PM-MN-013	NotificationsController	markAllAsRead()	PATCH + /notifications/mark-all-read	Kiểm tra đánh dấu tất cả thông báo đã đọc thành công	Authorization: Bearer {{accessToken}}	"- Trả về mã 200
+- success = true
+- message = ""All notifications marked as read""
+- data.updated là số"	Pass	Trần Quốc An
+PM-MN-014	NotificationsController	markAllAsRead()	PATCH + /notifications/mark-all-read	Kiểm tra mark-all-read khi không có thông báo cần cập nhật	Authorization: Bearer {{accessToken}} (không còn unread)	"- Trả về mã 200
+- success = true
+- data.updated = 0"	Pass	Trần Quốc An
+PM-MN-015	NotificationsController	markAllAsRead()	PATCH + /notifications/mark-all-read	Kiểm tra lỗi hệ thống khi cập nhật hàng loạt	Authorization: Bearer {{accessToken}}	"- Trả về mã 500
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An

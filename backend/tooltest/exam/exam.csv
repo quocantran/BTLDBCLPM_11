@@ -1,0 +1,187 @@
+Test Case ID	Test Objective			Mục tiêu	Dữ liệu đầu vào	Kết quả mong muốn	Kết quả thực tế	Người thực hiện
+	Tên file	Tên hàm	API					
+PM-ME-001	ExamsController	getMyCompletedExams()	GET + /exams/my-completed	Kiểm tra student chưa có bài thi đã hoàn thành	Authorization: Bearer {{studentAccessToken}}	"- Trả về mã 200
+- Response là mảng
+- Mảng có thể rỗng"	Pass	Trần Quốc An
+PM-ME-002	ExamsController	getMyCompletedExams()	GET + /exams/my-completed	Kiểm tra student có bài thi đã hoàn thành	Authorization: Bearer {{studentAccessToken}}	"- Trả về mã 200
+- Response là mảng
+- Nếu có phần tử thì có: submissionId, examPublicId, examTitle, score, result"	Pass	Trần Quốc An
+PM-ME-003	ExamsController	getMyCompletedExams()	GET + /exams/my-completed	Kiểm tra teacher gọi endpoint completed của student	Authorization: Bearer {{teacherAccessToken}}	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-004	ExamsController	listExamsByTeacher()	GET + /exams/teacher/:teacherId	Kiểm tra lấy danh sách exam theo teacher thành công	"Authorization: Bearer {{teacherAccessToken}}
+teacherId = ""{{teacherId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Exams retrieved successfully""
+- data.exams là mảng
+- data.pagination tồn tại"	Pass	Trần Quốc An
+PM-ME-005	ExamsController	listExamsByTeacher()	GET + /exams/teacher/:teacherId?search=Midterm	Kiểm tra tìm kiếm exam theo keyword	"Authorization: Bearer {{teacherAccessToken}}
+teacherId = ""{{teacherId}}""
+search = ""Midterm"""	"- Trả về mã 200
+- success = true
+- data.exams là mảng"	Pass	Trần Quốc An
+PM-ME-006	ExamsController	listExamsByTeacher()	GET + /exams/teacher/:teacherId?search=\	Kiểm tra search chứa ký tự backslash	"Authorization: Bearer {{teacherAccessToken}}
+teacherId = ""{{teacherId}}""
+search = ""\"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại
+- Không trả về mã 500"	Pass	Trần Quốc An
+PM-ME-007	ExamsController	createExam()	POST + /exams	Kiểm tra teacher tạo exam thành công	"Authorization: Bearer {{teacherAccessToken}}
+title = ""Midterm Exam""
+durationMinutes = 90
+startTime = ""{{examStartTime}}""
+endTime = ""{{examEndTime}}""
+courseId = ""{{courseId}}""
+rateScore = 70
+questions = [{content, answerQuestion, answer[4]}]"	"- Trả về mã 201
+- success = true
+- message = ""Exam created successfully""
+- data.exam.id tồn tại
+- data.exam.publicId đúng regex E + 6 số
+- Lưu examId, examPublicId vào collection variables"	Pass	Trần Quốc An
+PM-ME-008	ExamsController	createExam()	POST + /exams	Kiểm tra student tạo exam	"Authorization: Bearer {{studentAccessToken}}
+Body hợp lệ như case tạo exam"	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-009	ExamsController	createExam()	POST + /exams	Kiểm tra tạo exam với title vượt giới hạn	"Authorization: Bearer {{teacherAccessToken}}
+title = ""{{veryLongExamTitle}}""
+Các field khác hợp lệ"	"- Trả về mã 400
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-010	ExamsController	getExamById()	GET + /exams/:id	Kiểm tra teacher lấy chi tiết exam thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{examId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Exam retrieved successfully""
+- data.exam tồn tại
+- data.exam.questions là mảng"	Pass	Trần Quốc An
+PM-ME-011	ExamsController	getExamById()	GET + /exams/:id	Kiểm tra student gọi GET /exams/:id	"Authorization: Bearer {{studentAccessToken}}
+id = ""{{examId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-012	ExamsController	getExamById()	GET + /exams/:id	Kiểm tra lấy exam không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-013	ExamsController	updateExam()	PUT + /exams/:id	Kiểm tra teacher cập nhật exam thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{examId}}""
+Body update hợp lệ"	"- Trả về mã 200
+- success = true
+- message = ""Exam updated successfully""
+- data.exam.title phản ánh dữ liệu mới"	Pass	Trần Quốc An
+PM-ME-014	ExamsController	updateExam()	PUT + /exams/:id	Kiểm tra student cập nhật exam	"Authorization: Bearer {{studentAccessToken}}
+id = ""{{examId}}""
+Body update hợp lệ"	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-015	ExamsController	updateExam()	PUT + /exams/:id	Kiểm tra cập nhật exam không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099""
+Body update hợp lệ"	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-016	ExamsController	transitionExamStatus()	PATCH + /exams/:id/status	Kiểm tra teacher chuyển trạng thái exam sang active	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{examId}}""
+status = ""active"""	"- Trả về mã 200
+- success = true
+- message = ""Exam marked as active""
+- data.exam tồn tại"	Pass	Trần Quốc An
+PM-ME-017	ExamsController	transitionExamStatus()	PATCH + /exams/:id/status	Kiểm tra teacher chuyển trạng thái exam sang completed	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{examId}}""
+status = ""completed"""	"- Trả về mã 200
+- success = true
+- message = ""Exam marked as completed""
+- data.exam tồn tại"	Pass	Trần Quốc An
+PM-ME-018	ExamsController	transitionExamStatus()	PATCH + /exams/:id/status	Kiểm tra student chuyển trạng thái exam	"Authorization: Bearer {{studentAccessToken}}
+id = ""{{examId}}""
+status = ""active"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-019	ExamsController	deleteExam()	DELETE + /exams/:id	Kiểm tra teacher xóa exam thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{examId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Exam deleted successfully"""	Pass	Trần Quốc An
+PM-ME-020	ExamsController	deleteExam()	DELETE + /exams/:id	Kiểm tra student xóa exam	"Authorization: Bearer {{studentAccessToken}}
+id = ""{{examId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-021	ExamsController	deleteExam()	DELETE + /exams/:id	Kiểm tra xóa exam không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-022	ExamsController	joinExam()	POST + /exams/join	Kiểm tra student join exam thành công	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{examPublicId}}"""	"- Trả về mã 200
+- Response có: publicId, title, status, course
+- course.courseName tồn tại"	Pass	Trần Quốc An
+PM-ME-023	ExamsController	joinExam()	POST + /exams/join	Kiểm tra student không thuộc course thực hiện join exam	"Authorization: Bearer {{studentNotEnrolledAccessToken}}
+publicId = ""{{examPublicId}}"""	"- Trả về mã 403
+- Response lỗi có message"	Pass	Trần Quốc An
+PM-ME-024	ExamsController	joinExam()	POST + /exams/join	Kiểm tra join exam khi course tham chiếu không tồn tại	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{examPublicIdOfDeletedCourse}}"""	"- Trả về mã 404
+- Response lỗi có message"	Pass	Trần Quốc An
+PM-ME-025	ExamsController	getExamForTaking()	GET + /exams/:publicId/take	Kiểm tra lấy đề thi để làm bài thành công	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{examPublicId}}"""	"- Trả về mã 200
+- Response có: publicId, title, durationMinutes, endTime, questions
+- questions là mảng
+- choices không có field isCorrect"	Pass	Trần Quốc An
+PM-ME-026	ExamsController	getExamForTaking()	GET + /exams/:publicId/take	Kiểm tra lấy đề thi khi exam chưa active hoặc ngoài thời gian	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{inactiveExamPublicId}}"""	"- Trả về mã 400
+- Response lỗi có message"	Pass	Trần Quốc An
+PM-ME-027	ExamsController	getExamForTaking()	GET + /exams/:publicId/take	Kiểm tra lấy đề thi với publicId không tồn tại	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""E999998"""	"- Trả về mã 404
+- Response lỗi có message"	Pass	Trần Quốc An
+PM-ME-028	ExamsController	submitExam()	POST + /exams/:publicId/submit	Kiểm tra nộp bài thi thành công	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{examPublicId}}""
+answers = [{questionId, answerNumber}]"	"- Trả về mã 201
+- Response có: score, result, submissionId
+- Lưu submissionId vào collection variable"	Pass	Trần Quốc An
+PM-ME-029	ExamsController	submitExam()	POST + /exams/:publicId/submit	Kiểm tra nộp bài lần thứ hai	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{examPublicId}}""
+answers hợp lệ"	"- Trả về mã 403
+- Response lỗi có message"	Pass	Trần Quốc An
+PM-ME-030	ExamsController	submitExam()	POST + /exams/:publicId/submit	Kiểm tra nộp bài với answers[].questionId sai định dạng	"Authorization: Bearer {{studentAccessToken}}
+publicId = ""{{examPublicId}}""
+answers = [{questionId = ""not-object-id"", answerNumber = 2}]"	"- Trả về mã 400
+- Response lỗi có message
+- Không trả về mã 500"	Pass	Trần Quốc An
+PM-ME-031	ExamsController	getExamResults()	GET + /exams/:id/results	Kiểm tra teacher lấy kết quả exam thành công	"Authorization: Bearer {{teacherAccessToken}}
+id = ""{{examId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Exam results retrieved successfully""
+- data.exam tồn tại
+- data.results là mảng"	Pass	Trần Quốc An
+PM-ME-032	ExamsController	getExamResults()	GET + /exams/:id/results	Kiểm tra student lấy kết quả exam	"Authorization: Bearer {{studentAccessToken}}
+id = ""{{examId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-033	ExamsController	getExamResults()	GET + /exams/:id/results	Kiểm tra lấy kết quả exam không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+id = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-034	ExamsController	getSubmissionResultForTeacher()	GET + /exams/:examId/submissions/:submissionId/result	Kiểm tra teacher xem chi tiết bài nộp thành công	"Authorization: Bearer {{teacherAccessToken}}
+examId = ""{{examId}}""
+submissionId = ""{{submissionId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Submission detail retrieved successfully""
+- data.submissionId tồn tại"	Pass	Trần Quốc An
+PM-ME-035	ExamsController	getSubmissionResultForTeacher()	GET + /exams/:examId/submissions/:submissionId/result	Kiểm tra student gọi endpoint chi tiết bài nộp của teacher	"Authorization: Bearer {{studentAccessToken}}
+examId = ""{{examId}}""
+submissionId = ""{{submissionId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-036	ExamsController	getSubmissionResultForTeacher()	GET + /exams/:examId/submissions/:submissionId/result	Kiểm tra teacher xem submission không tồn tại	"Authorization: Bearer {{teacherAccessToken}}
+examId = ""{{examId}}""
+submissionId = ""507f1f77bcf86cd799439099"""	"- Trả về mã 404
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-037	ExamsController	getSubmissionResult()	GET + /exams/submissions/:submissionId/result	Kiểm tra student xem kết quả bài nộp của chính mình	"Authorization: Bearer {{studentAccessToken}}
+submissionId = ""{{submissionId}}"""	"- Trả về mã 200
+- success = true
+- message = ""Exam result retrieved successfully""
+- data.submissionId tồn tại"	Pass	Trần Quốc An
+PM-ME-038	ExamsController	getSubmissionResult()	GET + /exams/submissions/:submissionId/result	Kiểm tra submissionId sai định dạng	"Authorization: Bearer {{studentAccessToken}}
+submissionId = ""not-object-id"""	"- Trả về mã 400
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
+PM-ME-039	ExamsController	getSubmissionResult()	GET + /exams/submissions/:submissionId/result	Kiểm tra student xem kết quả bài nộp của người khác	"Authorization: Bearer {{studentAccessToken}}
+submissionId = ""{{otherStudentSubmissionId}}"""	"- Trả về mã 403
+- success = false
+- error.message tồn tại"	Pass	Trần Quốc An
