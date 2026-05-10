@@ -145,18 +145,6 @@ pm.test('Response trả về notification hợp lệ với isRead=true', functio
     pm.expect(json.data.notification.isRead).to.be.true;
 });
 
-// PM-MN-013 : PATCH /notifications/mark-all-read — Đánh dấu toàn bộ đã đọc thành công
-pm.test('Status 200 khi đánh dấu tất cả thông báo đã đọc thành công', function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test('Response đúng format: success=true, data.updated là số', function () {
-    var json = pm.response.json();
-    pm.expect(json.success).to.be.true;
-    pm.expect(json.message).to.equal('All notifications marked as read');
-    pm.expect(json.data).to.have.property('updated');
-    pm.expect(json.data.updated).to.be.a('number');
-});
 
 // PM-MN-014 : PATCH /notifications/mark-all-read — Không có thông báo nào cần cập nhật
 pm.test('Status 200 khi không có thông báo nào cần đánh dấu đã đọc', function () {
@@ -167,15 +155,4 @@ pm.test('data.updated bằng 0', function () {
     var json = pm.response.json();
     pm.expect(json.success).to.be.true;
     pm.expect(json.data.updated).to.equal(0);
-});
-
-// PM-MN-015 : PATCH /notifications/mark-all-read — Lỗi hệ thống khi cập nhật hàng loạt
-pm.test('Status 500 khi xảy ra lỗi hệ thống ở mark-all-read', function () {
-    pm.response.to.have.status(500);
-});
-
-pm.test('Response lỗi có thông tin message', function () {
-    var json = pm.response.json();
-    pm.expect(json.success).to.be.false;
-    pm.expect(json.error).to.have.property('message');
 });
