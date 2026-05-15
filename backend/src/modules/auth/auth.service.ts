@@ -4,11 +4,11 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   HttpException,
   HttpStatus,
-  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
@@ -25,15 +25,17 @@ import {
   RefreshTokenDto,
   ChangePasswordDto,
   UpdateProfileDto,
+  VerifyFaceDto,
   ForgotPasswordDto,
   ResetPasswordDto,
 } from './dto/auth.dto';
-import type { IJwtPayload, IUserProfile } from '../../common/interfaces';
+import type { IJwtPayload, IUser, IUserProfile } from '../../common/interfaces';
+import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { MailService } from './mail.service';
 import { createHash, randomBytes } from 'crypto';
-import { firstValueFrom } from 'rxjs';
-import { HttpService } from '@nestjs/axios';
+import type { AxiosResponse } from 'axios';
 
 interface PasswordResetRequestContext {
   ip?: string | string[];
@@ -64,9 +66,9 @@ export class AuthService {
     @InjectModel(PasswordResetToken.name)
     private readonly passwordResetTokenModel: Model<PasswordResetTokenDocument>,
     private readonly jwtService: JwtService,
+    private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
-    private readonly httpService: HttpService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -268,7 +270,7 @@ export class AuthService {
 
     await this.userModel.findByIdAndUpdate(user._id, {
       passwordHash: newPasswordHash,
-      $unset: { refreshTokenHash: 1 },
+      refreshTokenHash: undefined,
     });
 
     await this.passwordResetTokenModel.updateOne(
@@ -326,7 +328,7 @@ export class AuthService {
     // Update password and clear refresh token for security
     await this.userModel.findByIdAndUpdate(userId, {
       passwordHash: newPasswordHash,
-      $unset: { refreshTokenHash: 1 }, // Clear refresh token to force re-login
+      refreshTokenHash: undefined, // Clear refresh token to force re-login
     });
 
     return { message: 'Password changed successfully' };
@@ -527,6 +529,155 @@ export class AuthService {
 
     return Array.isArray(value) ? value[0] : value;
   }
+
+  /**
+   * Xác thực khuôn mặt của user bằng Gemini
+   * @param user Thông tin user từ JWT
+   * @param verifyFaceDto Ảnh webcam base64
+   * @returns
+   */
+  async verifyFace(user: IUser, verifyFaceDto: VerifyFaceDto) {
+    this.logger.log(`Starting face verification for user: ${user.username}`);
+
+    const { imageUrl: profileImageUrl } = user;
+    const { webcamImage } = verifyFaceDto;
+
+    this.logger.log(`Received webcam image for user: ${user?.username}`);
+    this.logger.log(`Profile image URL: ${profileImageUrl}`);
+    this.logger.log(`Webcam image : ${webcamImage}`);
+
+    // --- Validation 1: User đã có ảnh profile chưa? ---
+    if (!profileImageUrl) {
+      throw new BadRequestException(
+        'Profile picture not set. Please update your profile.',
+      );
+    }
+
+    // --- Validation 2: Định dạng Base64 ---
+    const webcamImageBase64 = webcamImage.split(',').pop();
+    if (!webcamImageBase64) {
+      throw new BadRequestException('Invalid webcam image format.');
+    }
+
+    let profileImageBase64: string;
+    let profileMimeType: string;
+
+    try {
+      // --- Step 3: Fetch ảnh profile từ URL (ví dụ: Cloudinary) ---
+      this.logger.log(`Fetching profile image from: ${profileImageUrl}`);
+      const response: AxiosResponse<ArrayBuffer> = await firstValueFrom(
+        this.httpService.get<ArrayBuffer>(profileImageUrl, {
+          responseType: 'arraybuffer',
+        }),
+      );
+
+      const headers = response.headers as Record<string, string | undefined>;
+      profileMimeType = headers['content-type'] ?? 'image/jpeg';
+      const binaryData = Buffer.from(response.data);
+      profileImageBase64 = binaryData.toString('base64');
+    } catch (error) {
+      this.logger.error(
+        `Failed to fetch profile image for user ${user.username}`,
+        error.stack,
+      );
+      throw new InternalServerErrorException(
+        'Could not retrieve profile image.',
+      );
+    }
+
+    // --- Step 4: Gọi Gemini API ---
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+    const systemPrompt =
+      "You are an expert security AI. Your task is to determine if two images are of the same person. Respond with only the word 'true' or 'false'.";
+
+    const payload = {
+      systemInstruction: {
+        parts: [{ text: systemPrompt }],
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: 'Are these two images of the same person? Image 1 is their official profile. Image 2 is a live webcam snapshot. Answer only "true" or "false".',
+            },
+            {
+              inlineData: {
+                mimeType: profileMimeType,
+                data: profileImageBase64,
+              },
+            },
+            {
+              inlineData: {
+                mimeType: 'image/jpeg', // ảnh webcam là jpeg
+                data: webcamImageBase64,
+              },
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'text/plain',
+      },
+    };
+
+    try {
+      this.logger.log(`Calling Gemini API for user: ${user.username}`);
+      const geminiResponse: AxiosResponse<GeminiResponse> =
+        await firstValueFrom(
+          this.httpService.post<GeminiResponse>(apiUrl, payload, {
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+      const textResponse =
+        geminiResponse.data.candidates?.[0]?.content.parts?.[0]?.text ?? '';
+
+      const decision = textResponse
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z]/g, '');
+
+      this.logger.log(`Gemini response for ${user.username}: "${decision}"`);
+
+      // --- Step 5: Xử lý kết quả ---
+      if (decision === 'true') {
+        return {
+          success: true,
+          message: 'Face verified successfully.',
+        };
+      } else {
+        this.logger.warn(`Face verification failed for user: ${user.username}`);
+        return {
+          success: false,
+          message: 'Face does not match profile. Verification failed.',
+        };
+      }
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error; // Ném lại lỗi 401
+
+      this.logger.error(
+        `Gemini API call failed for user ${user.username}`,
+        error.response?.data || error.message,
+      );
+      if (error.response?.status === 403) {
+        throw new InternalServerErrorException(
+          'Face verification failed: Invalid API Key or permissions.',
+        );
+      }
+      throw new InternalServerErrorException(
+        'Face verification service failed.',
+      );
+    }
+  }
+
+  /**
+   * Use Gemini to check the quality of the profile image
+   * @param imageBase64 Image (including data:image/jpeg;base64,)
+   * @returns
+   */
   async validateProfileImage(imageBase64: string) {
     this.logger.log('Validating new profile image...');
 
